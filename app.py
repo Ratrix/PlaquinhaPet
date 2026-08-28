@@ -8,12 +8,12 @@ from flask import Flask, render_template_string, request, redirect, send_file
 app = Flask(__name__)
 DB_NAME = 'pets.db'
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+# --- CONFIGURAÇÃO DO BANCO DE DADOS COM SENHA ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id FROM pets LIMIT 1")
+        cursor.execute("SELECT senha FROM pets LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("DROP TABLE IF EXISTS pets")
 
@@ -25,35 +25,34 @@ def init_db():
             tutor TEXT NOT NULL,
             telefone TEXT NOT NULL,
             observacoes TEXT,
-            status TEXT DEFAULT 'OK'
+            status TEXT DEFAULT 'OK',
+            senha TEXT
         )
     ''')
     
     cursor.execute("SELECT COUNT(*) FROM pets WHERE id = '1'")
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
-            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status)
-            VALUES ('1', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '5511999999999', 'Possui chip e precisa de medicação.', 'PERDIDO')
+            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
+            VALUES ('1', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '11980837042', 'Possui chip e precisa de medicação.', 'PERDIDO', '1234')
         ''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- GERADOR DE QR CODE MÍNIMO E REDIMENSIONADO (20x20mm) ---
+# --- GERADOR DE QR CODE MÍNIMO (20x20mm) ---
 def gerar_qr_code_20mm(link):
     qr = qrcode.QRCode(
-        version=None,                        # Permite ajustar dinamicamente para o menor tamanho suportado pela URL
-        error_correction=ERROR_CORRECT_L,    # Menos redundância = blocos bem maiores
+        version=None,
+        error_correction=ERROR_CORRECT_L,
         box_size=10,
         border=1
     )
     qr.add_data(link)
-    qr.make(fit=True)                        # Calcula a menor matriz válida sem estourar limite
+    qr.make(fit=True)
     
     img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    
-    # Redimensiona para exatamente 236x236px (20x20mm em 300 DPI)
     img = img.resize((236, 236))
     
     buffer = io.BytesIO()
@@ -127,10 +126,6 @@ def visualizar_pet_curto(pet_id):
     '''
     return render_template_string(html_template, pet=pet_data)
 
-@app.route('/pet/<pet_id>')
-def visualizar_pet_antigo(pet_id):
-    return redirect(f'/p/{pet_id}')
-
 @app.route('/qrcode/<pet_id>')
 def qrcode_pet(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
@@ -138,11 +133,12 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- PAINEL DO TUTOR / FORMULÁRIO DE CADASTRO E EDIÇÃO ---
+# --- PAINEL DO TUTOR COM SEGURANÇA E ALTERAÇÃO DE SENHA ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    erro = None
 
     if request.method == 'POST':
         pet_id = request.form['id']
@@ -152,18 +148,34 @@ def cadastrar():
         telefone = request.form['telefone']
         observacoes = request.form['observacoes']
         status = request.form['status']
+        senha_informada = request.form.get('senha_atual', '')
+        nova_senha = request.form.get('nova_senha', '')
+
+        cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
+        pet_existente = cursor.fetchone()
+
+        if pet_existente and pet_existente[0]:
+            if pet_existente[0] != senha_informada:
+                erro = "Senha atual incorreta! As alterações não foram salvas."
+                cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
+                pet = cursor.fetchone()
+                conn.close()
+                return render_template_string(html_form, pet=pet, erro=erro)
+
+        senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else senha_informada)
 
         cursor.execute('''
-            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 nome=excluded.nome,
                 raca=excluded.raca,
                 tutor=excluded.tutor,
                 telefone=excluded.telefone,
                 observacoes=excluded.observacoes,
-                status=excluded.status
-        ''', (pet_id, nome, raca, tutor, telefone, observacoes, status))
+                status=excluded.status,
+                senha=excluded.senha
+        ''', (pet_id, nome, raca, tutor, telefone, observacoes, status, senha_final))
         
         conn.commit()
         conn.close()
@@ -184,8 +196,10 @@ def cadastrar():
             body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
             .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
             h2 { color: #2c3e50; text-align: center; margin-top: 0; }
+            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+            .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
         </style>
@@ -193,6 +207,11 @@ def cadastrar():
     <body>
         <div class="form-card">
             <h2>⚙️ Área do Tutor</h2>
+            
+            {% if erro %}
+                <div class="erro">{{ erro }}</div>
+            {% endif %}
+
             <form method="POST">
                 <label>ID da Plaquinha:</label>
                 <input type="text" name="id" value="{{ pet[0] if pet else '1' }}" required>
@@ -218,6 +237,14 @@ def cadastrar():
                 <label>Observações / Recomendações:</label>
                 <textarea name="observacoes" rows="3">{{ pet[5] if pet else '' }}</textarea>
 
+                <div class="sec-pass">
+                    <label style="margin-top:0;">🔑 Senha Atual (Para Autorizar):</label>
+                    <input type="password" name="senha_atual" placeholder="Digite a senha atual" required>
+
+                    <label>🔒 Nova Senha (Opcional):</label>
+                    <input type="password" name="nova_senha" placeholder="Deixe em branco para manter a mesma">
+                </div>
+
                 <button type="submit">💾 Salvar Alterações</button>
             </form>
             <a href="/qrcode/1" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID 1)</a>
@@ -225,7 +252,7 @@ def cadastrar():
     </body>
     </html>
     '''
-    return render_template_string(html_form, pet=pet)
+    return render_template_string(html_form, pet=pet, erro=erro)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
