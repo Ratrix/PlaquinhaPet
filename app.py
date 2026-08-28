@@ -117,7 +117,11 @@ def visualizar_pet_curto(pet_id):
             {% endif %}
 
             <div class="nome">🐾 {{ pet.nome }}</div>
-            <div class="raca">{{ pet.raca }}</div>
+            
+            {% if pet.raca %}
+                <div class="raca"><strong>Raça:</strong> {{ pet.raca }}</div>
+            {% endif %}
+
             <div class="info-box">
                 <p style="margin: 3px 0;"><strong>Tutor:</strong> {{ pet.tutor }}</p>
                 <p style="margin: 3px 0;"><strong>Observações:</strong> {{ pet.observacoes }}</p>
@@ -139,7 +143,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- ÁREA DO TUTOR COM STATUS EXPANDIDO + OPÇÃO EDITÁVEL ---
+# --- ÁREA DO TUTOR ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -168,9 +172,7 @@ def cadastrar():
                 status_custom = request.form.get('status_custom', '').strip()
                 nova_senha = request.form.get('nova_senha', '')
 
-                # Define o status com base no que foi selecionado ou escrito
                 status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
-
                 senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else '1234')
 
                 cursor.execute('''
@@ -238,7 +240,6 @@ def cadastrar():
                 <input type="hidden" name="id" value="{{ pet_id }}">
 
                 {% if not autenticado %}
-                    <!-- PASSO 1: SENHA -->
                     <div class="sec-pass">
                         <label style="margin-top:0;">🔑 Digite a Senha do Tutor:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
@@ -247,7 +248,6 @@ def cadastrar():
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
                 {% else %}
-                    <!-- PASSO 2: FORMULÁRIO COM EDITAR STATUS -->
                     <label>ID da Plaquinha:</label>
                     <input type="text" value="{{ pet[0] if pet else pet_id }}" disabled style="background:#e9ecef;">
 
