@@ -1,3 +1,12 @@
+# =================================================================
+# PROJETO: PLAQUINHA PET 3D
+# DESENVOLVIDO POR: Joseanderson Langner
+# FORMAÇÃO: Engenharia de Controle e Automação
+# DATA DE DESENVOLVIMENTO: Agosto de 2026
+# DESCRIÇÃO: Sistema web dinâmico de identificação pet via QR Code 
+#            otimizado para modelagem e impressão 3D (20x20mm).
+# =================================================================
+
 import os
 import sqlite3
 import io
