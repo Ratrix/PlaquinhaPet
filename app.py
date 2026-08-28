@@ -17,14 +17,15 @@ from qrcode.constants import ERROR_CORRECT_L
 from flask import Flask, render_template_string, request, redirect, send_file, session
 
 app = Flask(__name__)
-app.secret_key = 'chave_secreta_langner_assados_3d'  # Sessão do Administrador
+app.secret_key = 'chave_secreta_langner_assados_3d'
 DB_NAME = 'pets.db'
-SENHA_ADM = 'admin123'  # 🔑 Alterar para sua senha preferida de desenvolvedor
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # Tabela de pets
     try:
         cursor.execute("SELECT senha FROM pets LIMIT 1")
     except sqlite3.OperationalError:
@@ -43,33 +44,54 @@ def init_db():
         )
     ''')
     
-    # Registro padrão inicial (ID 1)
+    # Tabela de configurações globais (Senha Mestre ADM)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS config (
+            chave TEXT PRIMARY KEY,
+            valor TEXT NOT NULL
+        )
+    ''')
+
+    # Registro padrão inicial do pet ID 1
     cursor.execute("SELECT COUNT(*) FROM pets WHERE id = '1'")
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
             INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
             VALUES ('1', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '11980837042', 'Possui chip e precisa de medicação.', 'PERDIDO', '1234')
         ''')
+        
+    # Configuração da Senha Mestre do ADM (Padrão inicial: 1234)
+    cursor.execute("SELECT valor FROM config WHERE chave = 'senha_adm'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO config (chave, valor) VALUES ('senha_adm', '1234')")
+
+    conn.commit()
+    conn.close()
+
+def get_senha_adm():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT valor FROM config WHERE chave = 'senha_adm'")
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else '1234'
+
+def set_senha_adm(nova_senha):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE config SET valor = ? WHERE chave = 'senha_adm'", (nova_senha,))
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- GERADORES DE QR CODE (PNG E SVG VETORIAL) ---
+# --- GERADORES DE QR CODE ---
 
 def gerar_qr_code_20mm_png(link):
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=ERROR_CORRECT_L,
-        box_size=10,
-        border=1
-    )
+    qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_L, box_size=10, border=1)
     qr.add_data(link)
     qr.make(fit=True)
-    
-    img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    img = img.resize((236, 236))
-    
+    img = qr.make_image(fill_color="black", back_color="white").convert('RGB').resize((236, 236))
     buffer = io.BytesIO()
     img.save(buffer, format='PNG', dpi=(300, 300))
     buffer.seek(0)
@@ -77,29 +99,21 @@ def gerar_qr_code_20mm_png(link):
 
 def gerar_qr_code_svg(link):
     factory = qrcode.image.svg.SvgPathImage
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=ERROR_CORRECT_L,
-        box_size=10,
-        border=1,
-        image_factory=factory
-    )
+    qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_L, box_size=10, border=1, image_factory=factory)
     qr.add_data(link)
     qr.make(fit=True)
-    
     img = qr.make_image()
     buffer = io.BytesIO()
     img.save(buffer)
     buffer.seek(0)
     return buffer
 
-# --- ROTAS PÚBLICAS E DO TUTOR ---
+# --- ROTAS DA APLICAÇÃO ---
 
 @app.route('/')
 def home():
     return redirect('/p/1')
 
-# Página Pública do Pet
 @app.route('/p/<pet_id>')
 def visualizar_pet_curto(pet_id):
     conn = sqlite3.connect(DB_NAME)
@@ -182,7 +196,6 @@ def visualizar_pet_curto(pet_id):
     '''
     return render_template_string(html_template, pet=pet_data)
 
-# Rota QR Code PNG
 @app.route('/qrcode/<pet_id>')
 def qrcode_pet(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
@@ -190,71 +203,100 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm_png(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# Rota QR Code SVG Vetorial Individual
 @app.route('/qrcode/svg/<pet_id>')
 def qrcode_pet_svg(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
     link = f"{host}/p/{pet_id}"
     img_buffer = gerar_qr_code_svg(link)
-    return send_file(
-        img_buffer,
-        mimetype='image/svg+xml',
-        as_attachment=True,
-        download_name=f'qrcode_plaquinha_{pet_id}.svg'
-    )
+    return send_file(img_buffer, mimetype='image/svg+xml', as_attachment=True, download_name=f'qrcode_plaquinha_{pet_id}.svg')
 
-# Área do Tutor
+# --- ÁREA DO TUTOR E PAINEL ADM UNIFICADOS ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     erro = None
-    autenticado = False
+    sucesso = None
+    autenticado_tutor = False
+    autenticado_adm = session.get('is_admin', False)
 
     pet_id = request.args.get('id') or request.form.get('id') or '1'
+    senha_adm_atual = get_senha_adm()
 
     if request.method == 'POST':
-        senha_informada = request.form.get('senha_atual', '')
+        # 🛠️ AÇÃO 1: GERAR LOTE DE PLAQUINHAS (ADM)
+        if 'gerar_lote' in request.form and autenticado_adm:
+            inicio = int(request.form.get('inicio', 1))
+            quantidade = int(request.form.get('quantidade', 150))
+            host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+            
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for i in range(inicio, inicio + quantidade):
+                    pid = str(i)
+                    link = f"{host}/p/{pid}"
+                    svg_data = gerar_qr_code_svg(link).getvalue()
+                    zip_file.writestr(f"plaquinha_{i:03d}.svg", svg_data)
+            
+            zip_buffer.seek(0)
+            return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip')
 
-        cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
-        pet_existente = cursor.fetchone()
-
-        senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
-
-        if senha_informada != senha_correta:
-            erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
-        else:
-            if 'salvar' in request.form:
-                nome = request.form['nome']
-                raca = request.form['raca']
-                tutor = request.form['tutor']
-                telefone = request.form['telefone']
-                observacoes = request.form['observacoes']
-                status_opcao = request.form['status_select']
-                status_custom = request.form.get('status_custom', '').strip()
-                nova_senha = request.form.get('nova_senha', '')
-
-                status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
-                senha_final = nova_senha if nova_senha.strip() != '' else senha_correta
-
-                cursor.execute('''
-                    INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        nome=excluded.nome,
-                        raca=excluded.raca,
-                        tutor=excluded.tutor,
-                        telefone=excluded.telefone,
-                        observacoes=excluded.observacoes,
-                        status=excluded.status,
-                        senha=excluded.senha
-                ''', (pet_id, nome, raca, tutor, telefone, observacoes, status_final, senha_final))
-                
-                conn.commit()
-                conn.close()
-                return redirect(f'/p/{pet_id}')
+        # 🛠️ AÇÃO 2: ALTERAR SENHA MESTRE DO ADM
+        elif 'alterar_senha_adm' in request.form and autenticado_adm:
+            nova_senha_mestre = request.form.get('nova_senha_mestre', '').strip()
+            if nova_senha_mestre:
+                set_senha_adm(nova_senha_mestre)
+                sucesso = "Senha Mestre do Desenvolvedor alterada com sucesso!"
             else:
-                autenticado = True
+                erro = "A nova senha Mestre não pode estar em branco."
+
+        # 🔑 AÇÃO 3: VALIDAÇÃO DE LOGIN (TUTOR OU ADM)
+        else:
+            senha_informada = request.form.get('senha_atual', '')
+
+            # Se for login do Desenvolvedor/ADM
+            if senha_informada == senha_adm_atual or request.form.get('id') == 'ADMIN':
+                if senha_informada == senha_adm_atual:
+                    session['is_admin'] = True
+                    autenticado_adm = True
+                else:
+                    erro = "Senha Mestre de Administrador incorreta!"
+            else:
+                # Login do Tutor
+                cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
+                pet_existente = cursor.fetchone()
+                senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
+
+                if senha_informada != senha_correta:
+                    erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
+                else:
+                    if 'salvar' in request.form:
+                        nome = request.form['nome']
+                        raca = request.form['raca']
+                        tutor = request.form['tutor']
+                        telefone = request.form['telefone']
+                        observacoes = request.form['observacoes']
+                        status_opcao = request.form['status_select']
+                        status_custom = request.form.get('status_custom', '').strip()
+                        nova_senha = request.form.get('nova_senha', '')
+
+                        status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
+                        senha_final = nova_senha if nova_senha.strip() != '' else senha_correta
+
+                        cursor.execute('''
+                            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                nome=excluded.nome, raca=excluded.raca, tutor=excluded.tutor,
+                                telefone=excluded.telefone, observacoes=excluded.observacoes,
+                                status=excluded.status, senha=excluded.senha
+                        ''', (pet_id, nome, raca, tutor, telefone, observacoes, status_final, senha_final))
+                        
+                        conn.commit()
+                        conn.close()
+                        return redirect(f'/p/{pet_id}')
+                    else:
+                        autenticado_tutor = True
 
     cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
     pet = cursor.fetchone()
@@ -272,6 +314,7 @@ def cadastrar():
             .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
             h2 { color: #2c3e50; text-align: center; margin-top: 0; font-size: 20px; }
             .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
+            .sucesso { background-color: #27ae60; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
             .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
@@ -283,16 +326,17 @@ def cadastrar():
             .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
             .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
             .num-label { font-size: 10px; color: #e74c3c; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
-            .adm-link { display: block; text-align: center; margin-top: 20px; font-size: 11px; color: #bdc3c7; text-decoration: none; }
+            
+            .adm-box { background: #34495e; color: white; padding: 15px; border-radius: 10px; margin-top: 10px; }
+            .adm-box label { color: #ecf0f1; }
+            .adm-box button { background-color: #8e44ad; }
+            .logout-adm { display: block; text-align: center; margin-top: 10px; color: #e74c3c; font-size: 12px; text-decoration: none; }
         </style>
         <script>
             function toggleCustomStatus(selectObject) {
                 var customInput = document.getElementById("status_custom_div");
-                if (selectObject.value === "CUSTOM") {
-                    customInput.style.display = "block";
-                } else {
-                    customInput.style.display = "none";
-                }
+                if (selectObject.value === "CUSTOM") { customInput.style.display = "block"; } 
+                else { customInput.style.display = "none"; }
             }
         </script>
     </head>
@@ -303,10 +347,42 @@ def cadastrar():
                 <div class="erro">{{ erro }}</div>
             {% endif %}
 
-            <form method="POST" action="/cadastrar?id={{ pet_id }}">
-                <input type="hidden" name="id" value="{{ pet_id }}">
+            {% if sucesso %}
+                <div class="sucesso">{{ sucesso }}</div>
+            {% endif %}
 
-                {% if not autenticado %}
+            {% if autenticado_adm %}
+                <!-- PAINEL MODOS DESENVOLVEDOR / ADM -->
+                <h2>🛠️ Modo Desenvolvedor / ADM</h2>
+                
+                <form method="POST">
+                    <div class="adm-box">
+                        <label style="margin-top:0;">🔢 ID do Primeiro Número:</label>
+                        <input type="number" name="inicio" value="1" min="1" required>
+
+                        <label>📦 Quantidade de QR Codes (Lote):</label>
+                        <input type="number" name="quantidade" value="150" min="1" max="500" required>
+
+                        <button type="submit" name="gerar_lote">🚀 Baixar Lote SVG (ZIP)</button>
+                    </div>
+                </form>
+
+                <!-- FORMULÁRIO PARA ALTERAR SENHA MESTRE -->
+                <form method="POST" style="margin-top: 15px;">
+                    <div class="sec-pass">
+                        <label style="margin-top:0; color:#2c3e50;">🔐 Alterar Senha Mestre do Desenvolvedor:</label>
+                        <input type="password" name="nova_senha_mestre" placeholder="Digite sua nova senha pessoal" required>
+                        <button type="submit" name="alterar_senha_adm" style="background-color: #e67e22; margin-top: 10px; font-size: 14px; padding: 8px;">🔑 Salvar Nova Senha Mestre</button>
+                    </div>
+                </form>
+
+                <a href="/admin_logout" class="logout-adm">Sair do Modo Desenvolvedor</a>
+
+            {% elif not autenticado_tutor %}
+                <!-- PASSO 1: TELA DE ENTRADA PADRÃO -->
+                <form method="POST" action="/cadastrar?id={{ pet_id }}">
+                    <input type="hidden" name="id" value="{{ pet_id }}">
+
                     <div>
                         <span class="num-label">NÚMERO DA PLAQUINHA</span>
                         <div class="header-id-container">
@@ -316,14 +392,19 @@ def cadastrar():
                     </div>
 
                     <div class="sec-pass">
-                        <label style="margin-top:0;">🔑 Digite a Senha do Tutor:</label>
+                        <label style="margin-top:0;">🔑 Digite a Senha:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
-                        <span class="help-text">ℹ️ Senha padrão de primeiro acesso: <strong>1234</strong></span>
+                        <span class="help-text">ℹ️ Tutor/ADM primeiro acesso: <strong>1234</strong></span>
                     </div>
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
-                {% else %}
-                    <h2>⚙️ Área do Tutor</h2>
+                </form>
+
+            {% else %}
+                <!-- PASSO 2: FORMULÁRIO DO TUTOR LIBERADO -->
+                <h2>⚙️ Área do Tutor</h2>
+                <form method="POST" action="/cadastrar?id={{ pet_id }}">
+                    <input type="hidden" name="id" value="{{ pet_id }}">
 
                     <label>ID da Plaquinha:</label>
                     <input type="text" value="{{ pet[0] if pet else pet_id }}" disabled style="background:#e9ecef;">
@@ -363,115 +444,21 @@ def cadastrar():
                     </div>
 
                     <button type="submit" name="salvar" style="background-color: #27ae60;">💾 Salvar Alterações</button>
-                {% endif %}
-            </form>
+                </form>
+            {% endif %}
 
             <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
             <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
-            <a href="/admin" class="adm-link">🛠️ Painel do Desenvolvedor</a>
         </div>
     </body>
     </html>
     '''
-    return render_template_string(html_form, pet=pet, erro=erro, autenticado=autenticado, pet_id=pet_id)
-
-# --- PAINEL DO DESENVOLVEDOR / GERADOR DE LOTE ADM ---
-
-@app.route('/admin', methods=['GET', 'POST'])
-def admin_panel():
-    erro = None
-    if request.method == 'POST':
-        if 'login' in request.form:
-            senha = request.form.get('senha_adm', '')
-            if senha == SENHA_ADM:
-                session['is_admin'] = True
-            else:
-                erro = "Senha de Administrador incorreta!"
-        elif 'gerar_lote' in request.form and session.get('is_admin'):
-            inicio = int(request.form.get('inicio', 1))
-            quantidade = int(request.form.get('quantidade', 150))
-            
-            host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
-            
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for i in range(inicio, inicio + quantidade):
-                    pet_id = str(i)
-                    link = f"{host}/p/{pet_id}"
-                    svg_data = gerar_qr_code_svg(link).getvalue()
-                    
-                    # Nome do arquivo vetorizado numerado sequencialmente
-                    filename = f"plaquinha_{i:03d}.svg"
-                    zip_file.writestr(filename, svg_data)
-            
-            zip_buffer.seek(0)
-            return send_file(
-                zip_buffer,
-                mimetype='application/zip',
-                as_attachment=True,
-                download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip'
-            )
-
-    html_admin = '''
-    <!DOCTYPE html>
-    <html lang="pt-br">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Painel Desenvolvedor - PlaquinhaPet</title>
-        <style>
-            body { font-family: 'Segoe UI', sans-serif; background-color: #2c3e50; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
-            .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
-            h2 { color: #2c3e50; text-align: center; margin-top: 0; }
-            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
-            label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 12px; }
-            input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-            button { width: 100%; background-color: #8e44ad; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
-            .btn-exit { background-color: #e74c3c; margin-top: 10px; }
-            .info-lote { background: #ecf0f1; padding: 12px; border-radius: 8px; font-size: 12px; color: #7f8c8d; margin-top: 15px; line-height: 1.5; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>🛠️ Painel ADM / Dev</h2>
-
-            {% if erro %}
-                <div class="erro">{{ erro }}</div>
-            {% endif %}
-
-            {% if not session.get('is_admin') %}
-                <form method="POST">
-                    <label>🔑 Senha Master do Administrador:</label>
-                    <input type="password" name="senha_adm" placeholder="Digite a senha ADM" required autofocus>
-                    <button type="submit" name="login">Acessar Painel</button>
-                </form>
-            {% else %}
-                <form method="POST">
-                    <label>🔢 ID do Primeiro Número:</label>
-                    <input type="number" name="inicio" value="1" min="1" required>
-
-                    <label>📦 Quantidade de QR Codes (Lote):</label>
-                    <input type="number" name="quantidade" value="150" min="1" max="500" required>
-
-                    <div class="info-lote">
-                        ℹ️ <strong>O que será gerado:</strong><br>
-                        Um arquivo <strong>ZIP</strong> contendo todos os vetores <strong>.SVG</strong> numerados (ex: <i>plaquinha_001.svg</i> até <i>plaquinha_150.svg</i>) prontos para importação no Fusion 360.
-                    </div>
-
-                    <button type="submit" name="gerar_lote">🚀 Gerar e Baixar Lote (ZIP)</button>
-                </form>
-                <a href="/admin_logout"><button class="btn-exit">Sair do Painel ADM</button></a>
-            {% endif %}
-        </div>
-    </body>
-    </html>
-    '''
-    return render_template_string(html_admin, erro=erro)
+    return render_template_string(html_form, pet=pet, erro=erro, sucesso=sucesso, autenticado_tutor=autenticado_tutor, autenticado_adm=autenticado_adm, pet_id=pet_id)
 
 @app.route('/admin_logout')
 def admin_logout():
     session.pop('is_admin', None)
-    return redirect('/admin')
+    return redirect('/cadastrar')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
