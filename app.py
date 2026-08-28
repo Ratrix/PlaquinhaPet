@@ -40,20 +40,18 @@ def init_db():
 
 init_db()
 
-# --- GERADOR DE QR CODE AJUSTADO PARA 20x20mm ---
+# --- GERADOR DE QR CODE MÍNIMO E REDIMENSIONADO (20x20mm) ---
 def gerar_qr_code_20mm(link):
     qr = qrcode.QRCode(
-        version=1,                           # Matriz estrita 21x21 módulos
-        error_correction=ERROR_CORRECT_L,    # Blocos grandes
-        box_size=10,                         # Define a proporção de cada pixel
-        border=0                             # Sem margem branca extra
+        version=1,
+        error_correction=ERROR_CORRECT_L,
+        box_size=10,
+        border=1
     )
     qr.add_data(link)
-    qr.make(fit=False)
+    qr.make(fit=True)
     
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    # Redimensiona para exatamente 236x236 pixels (~20x20mm em 300 DPI)
+    img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
     img = img.resize((236, 236))
     
     buffer = io.BytesIO()
@@ -120,7 +118,7 @@ def visualizar_pet_curto(pet_id):
             <a href="https://wa.me/{{ pet.telefone }}?text=Olá,%20encontrei%20o(a)%20{{ pet.nome }}!" class="btn-wsp" target="_blank">
                 💬 Falar com Tutor no WhatsApp
             </a>
-            <a href="/cadastrar" class="footer-link">Área do Tutor</a>
+            <a href="/cadastrar" class="footer-link">Área do Tutor (Editar Dados)</a>
         </div>
     </body>
     </html>
@@ -138,15 +136,94 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-@app.route('/cadastrar')
+# --- PAINEL DO TUTOR / FORMULÁRIO DE CADASTRO E EDIÇÃO ---
+@app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
-    return '''
-    <div style="font-family: sans-serif; text-align: center; padding: 50px;">
-        <h2>Painel PlaquinhaPet</h2>
-        <p><a href="/p/1">Ver perfil (ID 1)</a></p>
-        <p><a href="/qrcode/1" target="_blank">Ver QR Code 20x20mm (ID 1)</a></p>
-    </div>
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    if request.method == 'POST':
+        pet_id = request.form['id']
+        nome = request.form['nome']
+        raca = request.form['raca']
+        tutor = request.form['tutor']
+        telefone = request.form['telefone']
+        observacoes = request.form['observacoes']
+        status = request.form['status']
+
+        cursor.execute('''
+            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                nome=excluded.nome,
+                raca=excluded.raca,
+                tutor=excluded.tutor,
+                telefone=excluded.telefone,
+                observacoes=excluded.observacoes,
+                status=excluded.status
+        ''', (pet_id, nome, raca, tutor, telefone, observacoes, status))
+        
+        conn.commit()
+        conn.close()
+        return redirect(f'/p/{pet_id}')
+
+    cursor.execute("SELECT * FROM pets WHERE id = '1'")
+    pet = cursor.fetchone()
+    conn.close()
+
+    html_form = '''
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Área do Tutor - PlaquinhaPet</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+            h2 { color: #2c3e50; text-align: center; margin-top: 0; }
+            label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
+            input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+            button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
+            .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="form-card">
+            <h2>⚙️ Área do Tutor</h2>
+            <form method="POST">
+                <label>ID da Plaquinha:</label>
+                <input type="text" name="id" value="{{ pet[0] if pet else '1' }}" required>
+
+                <label>Nome do Pet:</label>
+                <input type="text" name="nome" value="{{ pet[1] if pet else '' }}" required>
+
+                <label>Raça / Espécie:</label>
+                <input type="text" name="raca" value="{{ pet[2] if pet else '' }}">
+
+                <label>Nome do Tutor:</label>
+                <input type="text" name="tutor" value="{{ pet[3] if pet else '' }}" required>
+
+                <label>Telefone/WhatsApp (com DDD):</label>
+                <input type="text" name="telefone" value="{{ pet[4] if pet else '' }}" required>
+
+                <label>Status do Pet:</label>
+                <select name="status">
+                    <option value="OK" {% if pet and pet[6] == 'OK' %}selected{% endif %}>🟢 Seguro (Normal)</option>
+                    <option value="PERDIDO" {% if pet and pet[6] == 'PERDIDO' %}selected{% endif %}>🚨 PERDIDO!</option>
+                </select>
+
+                <label>Observações / Recomendações:</label>
+                <textarea name="observacoes" rows="3">{{ pet[5] if pet else '' }}</textarea>
+
+                <button type="submit">💾 Salvar Alterações</button>
+            </form>
+            <a href="/qrcode/1" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID 1)</a>
+        </div>
+    </body>
+    </html>
     '''
+    return render_template_string(html_form, pet=pet)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
