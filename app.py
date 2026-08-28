@@ -1,6 +1,6 @@
 # =================================================================
 # PROJETO: PLAQUINHA PET 3D
-# DESENVOLVIDO POR: Joseanderson Langner
+# DESENVOLVDOR: Joseanderson Langner
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
 # DESCRIÇÃO: Sistema web dinâmico de identificação pet via QR Code 
@@ -11,6 +11,7 @@ import os
 import sqlite3
 import io
 import qrcode
+import qrcode.image.svg
 from qrcode.constants import ERROR_CORRECT_L
 from flask import Flask, render_template_string, request, redirect, send_file
 
@@ -51,8 +52,9 @@ def init_db():
 
 init_db()
 
-# --- GERADOR DE QR CODE MÍNIMO (20x20mm) ---
-def gerar_qr_code_20mm(link):
+# --- GERADORES DE QR CODE (PNG E SVG VETORIAL) ---
+
+def gerar_qr_code_20mm_png(link):
     qr = qrcode.QRCode(
         version=None,
         error_correction=ERROR_CORRECT_L,
@@ -67,6 +69,24 @@ def gerar_qr_code_20mm(link):
     
     buffer = io.BytesIO()
     img.save(buffer, format='PNG', dpi=(300, 300))
+    buffer.seek(0)
+    return buffer
+
+def gerar_qr_code_svg(link):
+    factory = qrcode.image.svg.SvgPathImage
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=ERROR_CORRECT_L,
+        box_size=10,
+        border=1,
+        image_factory=factory
+    )
+    qr.add_data(link)
+    qr.make(fit=True)
+    
+    img = qr.make_image()
+    buffer = io.BytesIO()
+    img.save(buffer)
     buffer.seek(0)
     return buffer
 
@@ -86,7 +106,6 @@ def visualizar_pet_curto(pet_id):
     conn.close()
 
     if not pet:
-        # Se for um primeiro acesso de uma plaquinha nova ainda não cadastrada
         pet_data = {
             'id': pet_id,
             'nome': f'Plaquinha #{pet_id} (Não Cadastrada)',
@@ -160,14 +179,28 @@ def visualizar_pet_curto(pet_id):
     '''
     return render_template_string(html_template, pet=pet_data)
 
+# Rota QR Code PNG (Para Tela / Visualização)
 @app.route('/qrcode/<pet_id>')
 def qrcode_pet(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
     link = f"{host}/p/{pet_id}"
-    img_buffer = gerar_qr_code_20mm(link)
+    img_buffer = gerar_qr_code_20mm_png(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- ÁREA DO TUTOR COM ID VISÍVEL NA ENTRADA ---
+# Rota QR Code SVG Vetorial (Para Importar no Fusion 360)
+@app.route('/qrcode/svg/<pet_id>')
+def qrcode_pet_svg(pet_id):
+    host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+    link = f"{host}/p/{pet_id}"
+    img_buffer = gerar_qr_code_svg(link)
+    return send_file(
+        img_buffer,
+        mimetype='image/svg+xml',
+        as_attachment=True,
+        download_name=f'qrcode_plaquinha_{pet_id}.svg'
+    )
+
+# --- ÁREA DO TUTOR ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -183,7 +216,6 @@ def cadastrar():
         cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
         pet_existente = cursor.fetchone()
 
-        # Validação de Senha (se o pet for novo, aceita a senha padrão 1234)
         senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
 
         if senha_informada != senha_correta:
@@ -243,8 +275,8 @@ def cadastrar():
             .help-text { font-size: 11px; color: #7f8c8d; margin-top: 3px; display: block; }
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
+            .svg-link { display: block; text-align: center; margin-top: 8px; color: #8e44ad; text-decoration: none; font-size: 12px; font-weight: bold; }
             
-            /* Título com Número da Plaquinha na entrada */
             .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
             .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
             .num-label { font-size: 10px; color: #e74c3c; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
@@ -271,7 +303,6 @@ def cadastrar():
                 <input type="hidden" name="id" value="{{ pet_id }}">
 
                 {% if not autenticado %}
-                    <!-- PASSO 1: TELA COM NÚMERO DA PLAQUINHA EM DESTAQUE E SENHA -->
                     <div>
                         <span class="num-label">NÚMERO DA PLAQUINHA</span>
                         <div class="header-id-container">
@@ -288,7 +319,6 @@ def cadastrar():
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
                 {% else %}
-                    <!-- PASSO 2: FORMULÁRIO COMPLETO COM DADOS DO PET -->
                     <h2>⚙️ Área do Tutor</h2>
 
                     <label>ID da Plaquinha:</label>
@@ -332,7 +362,8 @@ def cadastrar():
                 {% endif %}
             </form>
 
-            <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID {{ pet_id }})</a>
+            <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
+            <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
         </div>
     </body>
     </html>
