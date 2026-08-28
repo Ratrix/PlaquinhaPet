@@ -133,7 +133,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- FORMULÁRIO MESMO LAYOUT COM PROTEÇÃO DE SENHA ---
+# --- ÁREA DO TUTOR (VALIDAÇÃO DE SENHA + FORMULÁRIO COMPLETO) ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -141,21 +141,17 @@ def cadastrar():
     erro = None
     autenticado = False
 
-    pet_id_query = request.args.get('id', '1')
+    pet_id = request.args.get('id') or request.form.get('id') or '1'
 
     if request.method == 'POST':
-        pet_id = request.form['id']
         senha_informada = request.form.get('senha_atual', '')
 
         cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
         pet_existente = cursor.fetchone()
 
-        # Valida a senha
         if pet_existente and pet_existente[0] and pet_existente[0] != senha_informada:
-            erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
-            pet_id_query = pet_id
+            erro = "Senha incorreta! A senha padrão inicial é 1234."
         else:
-            # Se a senha estiver correta e tiver dados para salvar
             if 'salvar' in request.form:
                 nome = request.form['nome']
                 raca = request.form['raca']
@@ -185,9 +181,8 @@ def cadastrar():
                 return redirect(f'/p/{pet_id}')
             else:
                 autenticado = True
-                pet_id_query = pet_id
 
-    cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id_query,))
+    cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
     pet = cursor.fetchone()
     conn.close()
 
@@ -219,12 +214,11 @@ def cadastrar():
                 <div class="erro">{{ erro }}</div>
             {% endif %}
 
-            <form method="POST">
-                {% if not autenticado %}
-                    <!-- TELA INICIAL: PEDE APENAS A SENHA -->
-                    <label>ID da Plaquinha:</label>
-                    <input type="text" name="id" value="{{ pet_id_query }}" required>
+            <form method="POST" action="/cadastrar?id={{ pet_id }}">
+                <input type="hidden" name="id" value="{{ pet_id }}">
 
+                {% if not autenticado %}
+                    <!-- PASSO 1: PEDE APENAS A SENHA -->
                     <div class="sec-pass">
                         <label style="margin-top:0;">🔑 Digite a Senha do Tutor:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
@@ -233,9 +227,9 @@ def cadastrar():
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
                 {% else %}
-                    <!-- TELA LIBERADA: MESMO LAYOUT ANTERIOR -->
+                    <!-- PASSO 2: FORMULÁRIO COMPLETO LIBERADO -->
                     <label>ID da Plaquinha:</label>
-                    <input type="text" name="id" value="{{ pet[0] if pet else pet_id_query }}" required readonly style="background:#e9ecef;">
+                    <input type="text" value="{{ pet[0] if pet else pet_id }}" disabled style="background:#e9ecef;">
 
                     <label>Nome do Pet:</label>
                     <input type="text" name="nome" value="{{ pet[1] if pet else '' }}" required>
@@ -268,12 +262,12 @@ def cadastrar():
                 {% endif %}
             </form>
 
-            <a href="/qrcode/{{ pet_id_query }}" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID {{ pet_id_query }})</a>
+            <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID {{ pet_id }})</a>
         </div>
     </body>
     </html>
     '''
-    return render_template_string(html_form, pet=pet, erro=erro, autenticado=autenticado, pet_id_query=pet_id_query)
+    return render_template_string(html_form, pet=pet, erro=erro, autenticado=autenticado, pet_id=pet_id)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
