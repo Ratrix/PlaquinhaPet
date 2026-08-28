@@ -97,7 +97,8 @@ def visualizar_pet_curto(pet_id):
         <style>
             body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
             .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 90%; max-width: 380px; text-align: center; }
-            .alert { background-color: #e74c3c; color: white; padding: 10px; border-radius: 8px; font-weight: bold; font-size: 14px; margin-bottom: 15px; }
+            .alert-danger { background-color: #e74c3c; color: white; padding: 10px; border-radius: 8px; font-weight: bold; font-size: 14px; margin-bottom: 15px; }
+            .alert-warning { background-color: #d35400; color: white; padding: 10px; border-radius: 8px; font-weight: bold; font-size: 14px; margin-bottom: 15px; }
             .nome { font-size: 26px; color: #2c3e50; margin: 5px 0; font-weight: bold; }
             .raca { font-size: 14px; color: #7f8c8d; margin-bottom: 20px; }
             .info-box { background: #f8f9fa; text-align: left; padding: 12px; border-radius: 8px; border-left: 4px solid #3498db; font-size: 13px; margin-bottom: 20px; color: #34495e; }
@@ -107,9 +108,14 @@ def visualizar_pet_curto(pet_id):
     </head>
     <body>
         <div class="card">
-            {% if pet.status == 'PERDIDO' %}
-                <div class="alert">🚨 ATENÇÃO: ESTE PET ESTÁ PERDIDO!</div>
+            {% if 'PERDIDO' in pet.status.upper() %}
+                <div class="alert-danger">🚨 ATENÇÃO: {{ pet.status.upper() }}</div>
+            {% elif 'ROUBADO' in pet.status.upper() %}
+                <div class="alert-warning">⚠️ ALERTA: {{ pet.status.upper() }}</div>
+            {% elif pet.status != 'OK' and pet.status != '' %}
+                <div class="alert-warning">ℹ️ STATUS: {{ pet.status.upper() }}</div>
             {% endif %}
+
             <div class="nome">🐾 {{ pet.nome }}</div>
             <div class="raca">{{ pet.raca }}</div>
             <div class="info-box">
@@ -133,7 +139,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- ÁREA DO TUTOR (VALIDAÇÃO DE SENHA + FORMULÁRIO COMPLETO) ---
+# --- ÁREA DO TUTOR COM STATUS EXPANDIDO + OPÇÃO EDITÁVEL ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -158,8 +164,12 @@ def cadastrar():
                 tutor = request.form['tutor']
                 telefone = request.form['telefone']
                 observacoes = request.form['observacoes']
-                status = request.form['status']
+                status_opcao = request.form['status_select']
+                status_custom = request.form.get('status_custom', '').strip()
                 nova_senha = request.form.get('nova_senha', '')
+
+                # Define o status com base no que foi selecionado ou escrito
+                status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
 
                 senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else '1234')
 
@@ -174,7 +184,7 @@ def cadastrar():
                         observacoes=excluded.observacoes,
                         status=excluded.status,
                         senha=excluded.senha
-                ''', (pet_id, nome, raca, tutor, telefone, observacoes, status, senha_final))
+                ''', (pet_id, nome, raca, tutor, telefone, observacoes, status_final, senha_final))
                 
                 conn.commit()
                 conn.close()
@@ -205,6 +215,16 @@ def cadastrar():
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
         </style>
+        <script>
+            function toggleCustomStatus(selectObject) {
+                var customInput = document.getElementById("status_custom_div");
+                if (selectObject.value === "CUSTOM") {
+                    customInput.style.display = "block";
+                } else {
+                    customInput.style.display = "none";
+                }
+            }
+        </script>
     </head>
     <body>
         <div class="form-card">
@@ -218,7 +238,7 @@ def cadastrar():
                 <input type="hidden" name="id" value="{{ pet_id }}">
 
                 {% if not autenticado %}
-                    <!-- PASSO 1: PEDE APENAS A SENHA -->
+                    <!-- PASSO 1: SENHA -->
                     <div class="sec-pass">
                         <label style="margin-top:0;">🔑 Digite a Senha do Tutor:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
@@ -227,7 +247,7 @@ def cadastrar():
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
                 {% else %}
-                    <!-- PASSO 2: FORMULÁRIO COMPLETO LIBERADO -->
+                    <!-- PASSO 2: FORMULÁRIO COM EDITAR STATUS -->
                     <label>ID da Plaquinha:</label>
                     <input type="text" value="{{ pet[0] if pet else pet_id }}" disabled style="background:#e9ecef;">
 
@@ -244,10 +264,17 @@ def cadastrar():
                     <input type="text" name="telefone" value="{{ pet[4] if pet else '' }}" required>
 
                     <label>Status do Pet:</label>
-                    <select name="status">
+                    <select name="status_select" onchange="toggleCustomStatus(this)">
                         <option value="OK" {% if pet and pet[6] == 'OK' %}selected{% endif %}>🟢 Seguro (Normal)</option>
                         <option value="PERDIDO" {% if pet and pet[6] == 'PERDIDO' %}selected{% endif %}>🚨 PERDIDO!</option>
+                        <option value="ROUBADO" {% if pet and pet[6] == 'ROUBADO' %}selected{% endif %}>⚠️ ROUBADO!</option>
+                        <option value="CUSTOM" {% if pet and pet[6] not in ['OK', 'PERDIDO', 'ROUBADO'] and pet[6] %}selected{% endif %}>✏️ Personalizado (Escrever)</option>
                     </select>
+
+                    <div id="status_custom_div" style="display: {% if pet and pet[6] not in ['OK', 'PERDIDO', 'ROUBADO'] and pet[6] %}block{% else %}none{% endif %};">
+                        <label>✏️ Digite o Status Personalizado:</label>
+                        <input type="text" name="status_custom" placeholder="Ex: Em Lar Temporário / Procurado" value="{{ pet[6] if pet and pet[6] not in ['OK', 'PERDIDO', 'ROUBADO'] else '' }}">
+                    </div>
 
                     <label>Observações / Recomendações:</label>
                     <textarea name="observacoes" rows="3">{{ pet[5] if pet else '' }}</textarea>
