@@ -8,12 +8,10 @@ from flask import Flask, render_template_string, request, redirect, send_file
 app = Flask(__name__)
 DB_NAME = 'pets.db'
 
-# --- CONFIGURAÇÃO E TRATAMENTO DO BANCO DE DADOS ---
+# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # Se o banco antigo não tiver a coluna 'id', recria a tabela limpa
     try:
         cursor.execute("SELECT id FROM pets LIMIT 1")
     except sqlite3.OperationalError:
@@ -31,31 +29,35 @@ def init_db():
         )
     ''')
     
-    cursor.execute("SELECT COUNT(*) FROM pets WHERE id = 'PET001'")
+    cursor.execute("SELECT COUNT(*) FROM pets WHERE id = '1'")
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
             INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status)
-            VALUES ('PET001', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '5511999999999', 'Possui chip e precisa de medicação.', 'PERDIDO')
+            VALUES ('1', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '5511999999999', 'Possui chip e precisa de medicação.', 'PERDIDO')
         ''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- GERADOR DE QR CODE MINIMALISTA (VERSÃO 1) ---
-def gerar_qr_code_png(link):
+# --- GERADOR DE QR CODE AJUSTADO PARA 20x20mm ---
+def gerar_qr_code_20mm(link):
     qr = qrcode.QRCode(
-        version=1,                           # Matriz estrita 21x21
-        error_correction=ERROR_CORRECT_L,    # Mínimo de pontos, blocos maiores
-        box_size=10,
-        border=1
+        version=1,                           # Matriz estrita 21x21 módulos
+        error_correction=ERROR_CORRECT_L,    # Blocos grandes
+        box_size=10,                         # Define a proporção de cada pixel
+        border=0                             # Sem margem branca extra
     )
     qr.add_data(link)
-    qr.make(fit=True)
+    qr.make(fit=False)
     
     img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Redimensiona para exatamente 236x236 pixels (~20x20mm em 300 DPI)
+    img = img.resize((236, 236))
+    
     buffer = io.BytesIO()
-    img.save(buffer, format='PNG')
+    img.save(buffer, format='PNG', dpi=(300, 300))
     buffer.seek(0)
     return buffer
 
@@ -63,7 +65,7 @@ def gerar_qr_code_png(link):
 
 @app.route('/')
 def home():
-    return redirect('/p/PET001')
+    return redirect('/p/1')
 
 @app.route('/p/<pet_id>')
 def visualizar_pet_curto(pet_id):
@@ -131,8 +133,9 @@ def visualizar_pet_antigo(pet_id):
 
 @app.route('/qrcode/<pet_id>')
 def qrcode_pet(pet_id):
-    link = f"{request.host_url.rstrip('/')}/p/{pet_id}"
-    img_buffer = gerar_qr_code_png(link)
+    host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+    link = f"{host}/p/{pet_id}"
+    img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
 @app.route('/cadastrar')
@@ -140,8 +143,8 @@ def cadastrar():
     return '''
     <div style="font-family: sans-serif; text-align: center; padding: 50px;">
         <h2>Painel PlaquinhaPet</h2>
-        <p><a href="/p/PET001">Ver perfil (PET001)</a></p>
-        <p><a href="/qrcode/PET001" target="_blank">Ver QR Code Simplificado (PET001)</a></p>
+        <p><a href="/p/1">Ver perfil (ID 1)</a></p>
+        <p><a href="/qrcode/1" target="_blank">Ver QR Code 20x20mm (ID 1)</a></p>
     </div>
     '''
 
