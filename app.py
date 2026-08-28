@@ -43,15 +43,17 @@ init_db()
 # --- GERADOR DE QR CODE MÍNIMO E REDIMENSIONADO (20x20mm) ---
 def gerar_qr_code_20mm(link):
     qr = qrcode.QRCode(
-        version=1,
-        error_correction=ERROR_CORRECT_L,
+        version=None,                        # Permite ajustar dinamicamente para o menor tamanho suportado pela URL
+        error_correction=ERROR_CORRECT_L,    # Menos redundância = blocos bem maiores
         box_size=10,
         border=1
     )
     qr.add_data(link)
-    qr.make(fit=True)
+    qr.make(fit=True)                        # Calcula a menor matriz válida sem estourar limite
     
     img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
+    
+    # Redimensiona para exatamente 236x236px (20x20mm em 300 DPI)
     img = img.resize((236, 236))
     
     buffer = io.BytesIO()
