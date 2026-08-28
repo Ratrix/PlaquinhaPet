@@ -1,6 +1,6 @@
 # =================================================================
 # PROJETO: PLAQUINHA PET 3D
-# DESENVOLVDOR: Joseanderson Langner
+# DESENVOLVEDOR: Joseanderson Langner
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
 # DESCRIÇÃO: Sistema web dinâmico de identificação pet via QR Code 
@@ -10,13 +10,16 @@
 import os
 import sqlite3
 import io
+import zipfile
 import qrcode
 import qrcode.image.svg
 from qrcode.constants import ERROR_CORRECT_L
-from flask import Flask, render_template_string, request, redirect, send_file
+from flask import Flask, render_template_string, request, redirect, send_file, session
 
 app = Flask(__name__)
+app.secret_key = 'chave_secreta_langner_assados_3d'  # Sessão do Administrador
 DB_NAME = 'pets.db'
+SENHA_ADM = 'admin123'  # 🔑 Alterar para sua senha preferida de desenvolvedor
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
@@ -90,7 +93,7 @@ def gerar_qr_code_svg(link):
     buffer.seek(0)
     return buffer
 
-# --- ROTAS DA APLICAÇÃO ---
+# --- ROTAS PÚBLICAS E DO TUTOR ---
 
 @app.route('/')
 def home():
@@ -179,7 +182,7 @@ def visualizar_pet_curto(pet_id):
     '''
     return render_template_string(html_template, pet=pet_data)
 
-# Rota QR Code PNG (Para Tela / Visualização)
+# Rota QR Code PNG
 @app.route('/qrcode/<pet_id>')
 def qrcode_pet(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
@@ -187,7 +190,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm_png(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# Rota QR Code SVG Vetorial (Para Importar no Fusion 360)
+# Rota QR Code SVG Vetorial Individual
 @app.route('/qrcode/svg/<pet_id>')
 def qrcode_pet_svg(pet_id):
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
@@ -200,7 +203,7 @@ def qrcode_pet_svg(pet_id):
         download_name=f'qrcode_plaquinha_{pet_id}.svg'
     )
 
-# --- ÁREA DO TUTOR ---
+# Área do Tutor
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -280,6 +283,7 @@ def cadastrar():
             .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
             .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
             .num-label { font-size: 10px; color: #e74c3c; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
+            .adm-link { display: block; text-align: center; margin-top: 20px; font-size: 11px; color: #bdc3c7; text-decoration: none; }
         </style>
         <script>
             function toggleCustomStatus(selectObject) {
@@ -364,11 +368,110 @@ def cadastrar():
 
             <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
             <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
+            <a href="/admin" class="adm-link">🛠️ Painel do Desenvolvedor</a>
         </div>
     </body>
     </html>
     '''
     return render_template_string(html_form, pet=pet, erro=erro, autenticado=autenticado, pet_id=pet_id)
+
+# --- PAINEL DO DESENVOLVEDOR / GERADOR DE LOTE ADM ---
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_panel():
+    erro = None
+    if request.method == 'POST':
+        if 'login' in request.form:
+            senha = request.form.get('senha_adm', '')
+            if senha == SENHA_ADM:
+                session['is_admin'] = True
+            else:
+                erro = "Senha de Administrador incorreta!"
+        elif 'gerar_lote' in request.form and session.get('is_admin'):
+            inicio = int(request.form.get('inicio', 1))
+            quantidade = int(request.form.get('quantidade', 150))
+            
+            host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+            
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for i in range(inicio, inicio + quantidade):
+                    pet_id = str(i)
+                    link = f"{host}/p/{pet_id}"
+                    svg_data = gerar_qr_code_svg(link).getvalue()
+                    
+                    # Nome do arquivo vetorizado numerado sequencialmente
+                    filename = f"plaquinha_{i:03d}.svg"
+                    zip_file.writestr(filename, svg_data)
+            
+            zip_buffer.seek(0)
+            return send_file(
+                zip_buffer,
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip'
+            )
+
+    html_admin = '''
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Painel Desenvolvedor - PlaquinhaPet</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background-color: #2c3e50; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
+            h2 { color: #2c3e50; text-align: center; margin-top: 0; }
+            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
+            label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 12px; }
+            input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+            button { width: 100%; background-color: #8e44ad; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
+            .btn-exit { background-color: #e74c3c; margin-top: 10px; }
+            .info-lote { background: #ecf0f1; padding: 12px; border-radius: 8px; font-size: 12px; color: #7f8c8d; margin-top: 15px; line-height: 1.5; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>🛠️ Painel ADM / Dev</h2>
+
+            {% if erro %}
+                <div class="erro">{{ erro }}</div>
+            {% endif %}
+
+            {% if not session.get('is_admin') %}
+                <form method="POST">
+                    <label>🔑 Senha Master do Administrador:</label>
+                    <input type="password" name="senha_adm" placeholder="Digite a senha ADM" required autofocus>
+                    <button type="submit" name="login">Acessar Painel</button>
+                </form>
+            {% else %}
+                <form method="POST">
+                    <label>🔢 ID do Primeiro Número:</label>
+                    <input type="number" name="inicio" value="1" min="1" required>
+
+                    <label>📦 Quantidade de QR Codes (Lote):</label>
+                    <input type="number" name="quantidade" value="150" min="1" max="500" required>
+
+                    <div class="info-lote">
+                        ℹ️ <strong>O que será gerado:</strong><br>
+                        Um arquivo <strong>ZIP</strong> contendo todos os vetores <strong>.SVG</strong> numerados (ex: <i>plaquinha_001.svg</i> até <i>plaquinha_150.svg</i>) prontos para importação no Fusion 360.
+                    </div>
+
+                    <button type="submit" name="gerar_lote">🚀 Gerar e Baixar Lote (ZIP)</button>
+                </form>
+                <a href="/admin_logout"><button class="btn-exit">Sair do Painel ADM</button></a>
+            {% endif %}
+        </div>
+    </body>
+    </html>
+    '''
+    return render_template_string(html_admin, erro=erro)
+
+@app.route('/admin_logout')
+def admin_logout():
+    session.pop('is_admin', None)
+    return redirect('/admin')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
