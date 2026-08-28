@@ -3,12 +3,13 @@ import sqlite3
 import io
 import qrcode
 from qrcode.constants import ERROR_CORRECT_L
-from flask import Flask, render_template_string, request, redirect, send_file
+from flask import Flask, render_template_string, request, redirect, send_file, session
 
 app = Flask(__name__)
+app.secret_key = 'sua_chave_secreta_super_segura'  # Necessário para gerenciar a sessão logada
 DB_NAME = 'pets.db'
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS COM SENHA ---
+# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -60,7 +61,7 @@ def gerar_qr_code_20mm(link):
     buffer.seek(0)
     return buffer
 
-# --- ROTAS DA APLICAÇÃO ---
+# --- ROTAS PÚBLICAS ---
 
 @app.route('/')
 def home():
@@ -119,7 +120,7 @@ def visualizar_pet_curto(pet_id):
             <a href="https://wa.me/{{ pet.telefone }}?text=Olá,%20encontrei%20o(a)%20{{ pet.nome }}!" class="btn-wsp" target="_blank">
                 💬 Falar com Tutor no WhatsApp
             </a>
-            <a href="/cadastrar" class="footer-link">Área do Tutor (Editar Dados)</a>
+            <a href="/login?pet_id={{ pet.id }}" class="footer-link">🔐 Área do Tutor (Editar Dados)</a>
         </div>
     </body>
     </html>
@@ -133,12 +134,85 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- PAINEL DO TUTOR COM SEGURANÇA E INSTRUÇÃO DA SENHA PADRÃO ---
+# --- TELA DE LOGIN ---
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    erro = None
+    pet_id = request.args.get('pet_id', '1')
+
+    if request.method == 'POST':
+        pet_id = request.form['id']
+        senha = request.form['senha']
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
+        pet = cursor.fetchone()
+        conn.close()
+
+        # Se o pet não existir (novo cadastro) ou a senha for válida
+        if not pet or pet[0] == senha:
+            session['autenticado'] = True
+            session['pet_id'] = pet_id
+            return redirect(f'/cadastrar?id={pet_id}')
+        else:
+            erro = "Senha incorreta! A senha padrão inicial é 1234."
+
+    html_login = '''
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Login - Área do Tutor</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 350px; text-align: center; }
+            h2 { color: #2c3e50; margin-top: 0; }
+            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; margin-bottom: 15px; }
+            label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 12px; text-align: left; }
+            input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+            .help-text { font-size: 11px; color: #7f8c8d; margin-top: 4px; display: block; text-align: left; }
+            button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
+            .voltar { display: block; margin-top: 15px; font-size: 12px; color: #95a5a6; text-decoration: none; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>🔐 Área do Tutor</h2>
+            <p style="font-size: 13px; color: #7f8c8d; margin-bottom: 20px;">Digite a senha para acessar as configurações do pet.</p>
+            
+            {% if erro %}
+                <div class="erro">{{ erro }}</div>
+            {% endif %}
+
+            <form method="POST">
+                <label>ID da Plaquinha:</label>
+                <input type="text" name="id" value="{{ pet_id }}" required>
+
+                <label>Senha de Acesso:</label>
+                <input type="password" name="senha" placeholder="Digite sua senha" required>
+                <span class="help-text">ℹ️ Senha padrão de primeiro acesso: <strong>1234</strong></span>
+
+                <button type="submit">Entrar</button>
+            </form>
+            <a href="/p/{{ pet_id }}" class="voltar">← Voltar para o Perfil</a>
+        </div>
+    </body>
+    </html>
+    '''
+    return render_template_string(html_login, pet_id=pet_id, erro=erro)
+
+# --- PAINEL DO TUTOR (PROTEGIDO) ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
+    # Bloqueia o acesso direto se não tiver feito login
+    if not session.get('autenticado'):
+        return redirect('/login')
+
+    pet_id_session = session.get('pet_id', '1')
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    erro = None
 
     if request.method == 'POST':
         pet_id = request.form['id']
@@ -148,21 +222,12 @@ def cadastrar():
         telefone = request.form['telefone']
         observacoes = request.form['observacoes']
         status = request.form['status']
-        senha_informada = request.form.get('senha_atual', '')
         nova_senha = request.form.get('nova_senha', '')
 
         cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
         pet_existente = cursor.fetchone()
 
-        if pet_existente and pet_existente[0]:
-            if pet_existente[0] != senha_informada:
-                erro = "Senha atual incorreta! A senha padrão inicial é 1234."
-                cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
-                pet = cursor.fetchone()
-                conn.close()
-                return render_template_string(html_form, pet=pet, erro=erro)
-
-        senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else senha_informada)
+        senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else '1234')
 
         cursor.execute('''
             INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
@@ -181,7 +246,7 @@ def cadastrar():
         conn.close()
         return redirect(f'/p/{pet_id}')
 
-    cursor.execute("SELECT * FROM pets WHERE id = '1'")
+    cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id_session,))
     pet = cursor.fetchone()
     conn.close()
 
@@ -191,31 +256,25 @@ def cadastrar():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Área do Tutor - PlaquinhaPet</title>
+        <title>Editar Dados - PlaquinhaPet</title>
         <style>
             body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
             .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
             h2 { color: #2c3e50; text-align: center; margin-top: 0; }
-            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
             .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
-            .help-text { font-size: 11px; color: #7f8c8d; margin-top: 3px; display: block; }
-            button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
-            .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
+            button { width: 100%; background-color: #27ae60; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
+            .qr-link { display: block; text-align: center; margin-top: 15px; color: #3498db; text-decoration: none; font-size: 13px; font-weight: bold; }
+            .logout { display: block; text-align: center; margin-top: 10px; font-size: 12px; color: #e74c3c; text-decoration: none; }
         </style>
     </head>
     <body>
         <div class="form-card">
-            <h2>⚙️ Área do Tutor</h2>
-            
-            {% if erro %}
-                <div class="erro">{{ erro }}</div>
-            {% endif %}
-
+            <h2>⚙️ Editar Plaquinha</h2>
             <form method="POST">
                 <label>ID da Plaquinha:</label>
-                <input type="text" name="id" value="{{ pet[0] if pet else '1' }}" required>
+                <input type="text" name="id" value="{{ pet[0] if pet else '1' }}" required readonly style="background:#e9ecef;">
 
                 <label>Nome do Pet:</label>
                 <input type="text" name="nome" value="{{ pet[1] if pet else '' }}" required>
@@ -239,22 +298,24 @@ def cadastrar():
                 <textarea name="observacoes" rows="3">{{ pet[5] if pet else '' }}</textarea>
 
                 <div class="sec-pass">
-                    <label style="margin-top:0;">🔑 Senha Atual (Para Autorizar):</label>
-                    <input type="password" name="senha_atual" placeholder="Digite a senha atual" required>
-                    <span class="help-text">ℹ️ Senha padrão de primeiro acesso: <strong>1234</strong></span>
-
-                    <label style="margin-top:10px;">🔒 Nova Senha (Opcional):</label>
-                    <input type="password" name="nova_senha" placeholder="Digite para alterar a senha">
+                    <label style="margin-top:0;">🔒 Nova Senha (Opcional):</label>
+                    <input type="password" name="nova_senha" placeholder="Deixe em branco para manter a atual">
                 </div>
 
                 <button type="submit">💾 Salvar Alterações</button>
             </form>
-            <a href="/qrcode/1" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm (ID 1)</a>
+            <a href="/qrcode/{{ pet[0] if pet else '1' }}" target="_blank" class="qr-link">🔍 Baixar QR Code 20x20mm</a>
+            <a href="/logout" class="logout">Sair da Área do Tutor</a>
         </div>
     </body>
     </html>
     '''
-    return render_template_string(html_form, pet=pet, erro=erro)
+    return render_template_string(html_form, pet=pet)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
