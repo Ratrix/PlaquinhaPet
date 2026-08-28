@@ -4,7 +4,7 @@
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
 # DESCRIÇÃO: Sistema web dinâmico de identificação pet via QR Code 
-#            otimizado para modelagem e impressão 3D ou laser.
+#            otimizado para modelagem e impressão 3D (20x20mm).
 # =================================================================
 
 import os
@@ -39,6 +39,7 @@ def init_db():
         )
     ''')
     
+    # Registro padrão inicial (ID 1)
     cursor.execute("SELECT COUNT(*) FROM pets WHERE id = '1'")
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
@@ -75,6 +76,7 @@ def gerar_qr_code_20mm(link):
 def home():
     return redirect('/p/1')
 
+# Página Pública do Pet
 @app.route('/p/<pet_id>')
 def visualizar_pet_curto(pet_id):
     conn = sqlite3.connect(DB_NAME)
@@ -84,17 +86,26 @@ def visualizar_pet_curto(pet_id):
     conn.close()
 
     if not pet:
-        return "Pet não encontrado", 404
-
-    pet_data = {
-        'id': pet[0],
-        'nome': pet[1],
-        'raca': pet[2],
-        'tutor': pet[3],
-        'telefone': pet[4],
-        'observacoes': pet[5],
-        'status': pet[6]
-    }
+        # Se for um primeiro acesso de uma plaquinha nova ainda não cadastrada
+        pet_data = {
+            'id': pet_id,
+            'nome': f'Plaquinha #{pet_id} (Não Cadastrada)',
+            'raca': '',
+            'tutor': 'Aguardando Cadastro do Tutor',
+            'telefone': '',
+            'observacoes': 'Esta plaquinha ainda não foi configurada pelo tutor.',
+            'status': 'NOVA'
+        }
+    else:
+        pet_data = {
+            'id': pet[0],
+            'nome': pet[1],
+            'raca': pet[2],
+            'tutor': pet[3],
+            'telefone': pet[4],
+            'observacoes': pet[5],
+            'status': pet[6]
+        }
 
     html_template = '''
     <!DOCTYPE html>
@@ -121,7 +132,7 @@ def visualizar_pet_curto(pet_id):
                 <div class="alert-danger">🚨 ATENÇÃO: {{ pet.status.upper() }}</div>
             {% elif 'ROUBADO' in pet.status.upper() %}
                 <div class="alert-warning">⚠️ ALERTA: {{ pet.status.upper() }}</div>
-            {% elif pet.status != 'OK' and pet.status != '' %}
+            {% elif pet.status != 'OK' and pet.status != 'NOVA' and pet.status != '' %}
                 <div class="alert-warning">ℹ️ STATUS: {{ pet.status.upper() }}</div>
             {% endif %}
 
@@ -135,9 +146,13 @@ def visualizar_pet_curto(pet_id):
                 <p style="margin: 3px 0;"><strong>Tutor:</strong> {{ pet.tutor }}</p>
                 <p style="margin: 3px 0;"><strong>Observações:</strong> {{ pet.observacoes }}</p>
             </div>
+
+            {% if pet.telefone %}
             <a href="https://wa.me/{{ pet.telefone }}?text=Olá,%20encontrei%20o(a)%20{{ pet.nome }}!" class="btn-wsp" target="_blank">
                 💬 Falar com Tutor no WhatsApp
             </a>
+            {% endif %}
+
             <a href="/cadastrar?id={{ pet.id }}" class="footer-link">Área do Tutor (Editar Dados)</a>
         </div>
     </body>
@@ -152,7 +167,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- ÁREA DO TUTOR ---
+# --- ÁREA DO TUTOR COM ID VISÍVEL NA ENTRADA ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -168,8 +183,11 @@ def cadastrar():
         cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
         pet_existente = cursor.fetchone()
 
-        if pet_existente and pet_existente[0] and pet_existente[0] != senha_informada:
-            erro = "Senha incorreta! A senha padrão inicial é 1234."
+        # Validação de Senha (se o pet for novo, aceita a senha padrão 1234)
+        senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
+
+        if senha_informada != senha_correta:
+            erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
         else:
             if 'salvar' in request.form:
                 nome = request.form['nome']
@@ -182,7 +200,7 @@ def cadastrar():
                 nova_senha = request.form.get('nova_senha', '')
 
                 status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
-                senha_final = nova_senha if nova_senha.strip() != '' else (pet_existente[0] if pet_existente else '1234')
+                senha_final = nova_senha if nova_senha.strip() != '' else senha_correta
 
                 cursor.execute('''
                     INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
@@ -217,7 +235,7 @@ def cadastrar():
         <style>
             body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
             .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
-            h2 { color: #2c3e50; text-align: center; margin-top: 0; }
+            h2 { color: #2c3e50; text-align: center; margin-top: 0; font-size: 20px; }
             .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
@@ -225,6 +243,11 @@ def cadastrar():
             .help-text { font-size: 11px; color: #7f8c8d; margin-top: 3px; display: block; }
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
+            
+            /* Título com Número da Plaquinha na entrada */
+            .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+            .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
+            .num-label { font-size: 10px; color: #e74c3c; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
         </style>
         <script>
             function toggleCustomStatus(selectObject) {
@@ -239,7 +262,6 @@ def cadastrar():
     </head>
     <body>
         <div class="form-card">
-            <h2>⚙️ Área do Tutor</h2>
             
             {% if erro %}
                 <div class="erro">{{ erro }}</div>
@@ -249,6 +271,15 @@ def cadastrar():
                 <input type="hidden" name="id" value="{{ pet_id }}">
 
                 {% if not autenticado %}
+                    <!-- PASSO 1: TELA COM NÚMERO DA PLAQUINHA EM DESTAQUE E SENHA -->
+                    <div>
+                        <span class="num-label">NÚMERO DA PLAQUINHA</span>
+                        <div class="header-id-container">
+                            <div class="num-badge">{{ pet_id }}</div>
+                            <h2>⚙️ Área do Tutor</h2>
+                        </div>
+                    </div>
+
                     <div class="sec-pass">
                         <label style="margin-top:0;">🔑 Digite a Senha do Tutor:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
@@ -257,20 +288,23 @@ def cadastrar():
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
                 {% else %}
+                    <!-- PASSO 2: FORMULÁRIO COMPLETO COM DADOS DO PET -->
+                    <h2>⚙️ Área do Tutor</h2>
+
                     <label>ID da Plaquinha:</label>
                     <input type="text" value="{{ pet[0] if pet else pet_id }}" disabled style="background:#e9ecef;">
 
                     <label>Nome do Pet:</label>
-                    <input type="text" name="nome" value="{{ pet[1] if pet else '' }}" required>
+                    <input type="text" name="nome" value="{{ pet[1] if pet else '' }}" placeholder="Ex: Zoey" required>
 
                     <label>Raça / Espécie:</label>
-                    <input type="text" name="raca" value="{{ pet[2] if pet else '' }}">
+                    <input type="text" name="raca" value="{{ pet[2] if pet else '' }}" placeholder="Ex: Poodle / Vira-lata">
 
                     <label>Nome do Tutor:</label>
-                    <input type="text" name="tutor" value="{{ pet[3] if pet else '' }}" required>
+                    <input type="text" name="tutor" value="{{ pet[3] if pet else '' }}" placeholder="Seu nome completo" required>
 
                     <label>Telefone/WhatsApp (com DDD):</label>
-                    <input type="text" name="telefone" value="{{ pet[4] if pet else '' }}" required>
+                    <input type="text" name="telefone" value="{{ pet[4] if pet else '' }}" placeholder="Ex: 11999999999" required>
 
                     <label>Status do Pet:</label>
                     <select name="status_select" onchange="toggleCustomStatus(this)">
@@ -286,7 +320,7 @@ def cadastrar():
                     </div>
 
                     <label>Observações / Recomendações:</label>
-                    <textarea name="observacoes" rows="3">{{ pet[5] if pet else '' }}</textarea>
+                    <textarea name="observacoes" rows="3" placeholder="Possui chip, toma medicação...">{{ pet[5] if pet else '' }}</textarea>
 
                     <div class="sec-pass">
                         <input type="hidden" name="senha_atual" value="{{ pet[7] if pet else '1234' }}">
