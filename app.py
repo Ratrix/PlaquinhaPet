@@ -4,7 +4,7 @@
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
 # DESCRIÇÃO: Sistema web dinâmico de identificação pet via QR Code 
-#            otimizado para modelagem e impressão 3D (20x20mm).
+#            otimizado para modelagem e impressão 3D ou laser.
 # =================================================================
 
 import os
