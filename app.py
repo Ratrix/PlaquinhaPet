@@ -133,7 +133,7 @@ def qrcode_pet(pet_id):
     img_buffer = gerar_qr_code_20mm(link)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- PAINEL DO TUTOR COM SEGURANÇA E ALTERAÇÃO DE SENHA ---
+# --- PAINEL DO TUTOR COM SEGURANÇA E INSTRUÇÃO DA SENHA PADRÃO ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
@@ -156,7 +156,7 @@ def cadastrar():
 
         if pet_existente and pet_existente[0]:
             if pet_existente[0] != senha_informada:
-                erro = "Senha atual incorreta! As alterações não foram salvas."
+                erro = "Senha atual incorreta! A senha padrão inicial é 1234."
                 cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
                 pet = cursor.fetchone()
                 conn.close()
@@ -200,6 +200,7 @@ def cadastrar():
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
             .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
+            .help-text { font-size: 11px; color: #7f8c8d; margin-top: 3px; display: block; }
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
         </style>
@@ -240,9 +241,10 @@ def cadastrar():
                 <div class="sec-pass">
                     <label style="margin-top:0;">🔑 Senha Atual (Para Autorizar):</label>
                     <input type="password" name="senha_atual" placeholder="Digite a senha atual" required>
+                    <span class="help-text">ℹ️ Senha padrão de primeiro acesso: <strong>1234</strong></span>
 
-                    <label>🔒 Nova Senha (Opcional):</label>
-                    <input type="password" name="nova_senha" placeholder="Deixe em branco para manter a mesma">
+                    <label style="margin-top:10px;">🔒 Nova Senha (Opcional):</label>
+                    <input type="password" name="nova_senha" placeholder="Digite para alterar a senha">
                 </div>
 
                 <button type="submit">💾 Salvar Alterações</button>
