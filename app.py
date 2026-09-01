@@ -1,5 +1,5 @@
 # =================================================================
-# PROJETO: PLAQUINHA PET 3D (Formato Osso)
+# PROJETO: PLAQUINHA PET 3D
 # DESENVOLVEDOR: Joseanderson Langner
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
@@ -105,41 +105,33 @@ def gerar_qr_code_svg(link):
     buffer.seek(0)
     return buffer
 
-# --- GERADOR DA IMAGEM DA PLAQUINHA FORMATO OSSO ---
+# --- GERADOR QUE UTILIZA A SUA IMAGEM "gabarito_osso.png" ---
 def gerar_preview_plaquinha_50x30(pet_id, nome_pet):
-    img = Image.new('RGB', (500, 300), color=(244, 246, 249))
+    try:
+        # Carrega a imagem enviada por você no GitHub
+        img = Image.open('gabarito_osso.png').convert('RGB').resize((600, 380))
+    except IOError:
+        # Reserva de segurança caso o arquivo falhe
+        img = Image.new('RGB', (600, 380), color=(20, 20, 20))
+
     draw = ImageDraw.Draw(img)
 
-    # Nós do osso (Círculos nas 4 pontas)
-    draw.ellipse([20, 20, 140, 140], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
-    draw.ellipse([20, 160, 140, 280], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
-    draw.ellipse([360, 20, 480, 140], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
-    draw.ellipse([360, 160, 480, 280], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
-
-    # Corpo central do osso
-    draw.rectangle([80, 50, 420, 250], fill=(255, 255, 255), outline=(255, 255, 255))
-    draw.line([(80, 50), (420, 50)], fill=(50, 50, 50), width=4)
-    draw.line([(80, 250), (420, 250)], fill=(50, 50, 50), width=4)
-
-    # Furo da Argola (Nó Superior Esquerdo)
-    draw.ellipse([65, 65, 95, 95], fill=(244, 246, 249), outline=(50, 50, 50), width=3)
-
-    # QR Code Rebaixo Central (20x20mm)
+    # 1. Aplica o QR Code dinâmico sobreposto no rebaixo do gabarito
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
     link = f"{host}/p/{pet_id}"
-    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((150, 150))
-    img.paste(qr_img, (175, 75))
+    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((140, 140))
+    
+    # Posição centralizada para o QR Code
+    img.paste(qr_img, (140, 115))
 
-    # Textos do Osso
+    # 2. Textos (ID do Pet e Instrução)
     try:
-        font_large = ImageFont.truetype("arial.ttf", 24)
-        font_small = ImageFont.truetype("arial.ttf", 18)
+        font_sub = ImageFont.truetype("arial.ttf", 16)
     except IOError:
-        font_large = font_small = ImageFont.load_default()
+        font_sub = ImageFont.load_default()
 
-    nome_exibicao = (nome_pet[:8] + '..') if len(nome_pet) > 8 else nome_pet
-    draw.text((345, 120), nome_exibicao.upper(), fill=(40, 40, 40), font=font_large)
-    draw.text((345, 160), f"#{pet_id}", fill=(200, 40, 40), font=font_small)
+    # Chamada e identificador dinâmico do pet
+    draw.text((300, 285), f"PLAQUINHA #{pet_id}", fill=(255, 255, 255), font=font_sub, anchor="mm")
 
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
@@ -419,7 +411,7 @@ def cadastrar():
                 </form>
             {% endif %}
 
-            <a href="/preview/plaquinha/{{ pet_id }}" target="_blank" class="preview-link">🦴 Ver Modelo 3D (Formato Osso)</a>
+            <a href="/preview/plaquinha/{{ pet_id }}" target="_blank" class="preview-link">🦴 Ver Modelo 3D (Gabarito Real)</a>
             <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
             <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
         </div>
