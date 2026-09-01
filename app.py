@@ -1,5 +1,5 @@
 # =================================================================
-# PROJETO: PLAQUINHA PET 3D
+# PROJETO: PLAQUINHA PET 3D (Formato Osso)
 # DESENVOLVEDOR: Joseanderson Langner
 # FORMAÇÃO: Engenharia de Controle e Automação
 # DATA DE DESENVOLVIMENTO: Agosto de 2026
@@ -105,36 +105,41 @@ def gerar_qr_code_svg(link):
     buffer.seek(0)
     return buffer
 
-# --- GERADOR DA IMAGEM DA PLAQUINHA 50x30mm PARA MODELAGEM 3D ---
+# --- GERADOR DA IMAGEM DA PLAQUINHA FORMATO OSSO ---
 def gerar_preview_plaquinha_50x30(pet_id, nome_pet):
-    # Proporção 500x300 pixels (representando 50x30mm)
-    img = Image.new('RGB', (500, 300), color=(240, 240, 240))
+    img = Image.new('RGB', (500, 300), color=(244, 246, 249))
     draw = ImageDraw.Draw(img)
 
-    # Corpo da Placa (Borda arredondada)
-    draw.rounded_rectangle([10, 10, 490, 290], radius=30, fill=(255, 255, 255), outline=(50, 50, 50), width=4)
+    # Nós do osso (Círculos nas 4 pontas)
+    draw.ellipse([20, 20, 140, 140], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
+    draw.ellipse([20, 160, 140, 280], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
+    draw.ellipse([360, 20, 480, 140], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
+    draw.ellipse([360, 160, 480, 280], fill=(255, 255, 255), outline=(50, 50, 50), width=4)
 
-    # Furo da Argola (Extremidade Esquerda - 4mm)
-    draw.ellipse([30, 125, 80, 175], fill=(240, 240, 240), outline=(50, 50, 50), width=3)
+    # Corpo central do osso
+    draw.rectangle([80, 50, 420, 250], fill=(255, 255, 255), outline=(255, 255, 255))
+    draw.line([(80, 50), (420, 50)], fill=(50, 50, 50), width=4)
+    draw.line([(80, 250), (420, 250)], fill=(50, 50, 50), width=4)
 
-    # QR Code (Rebaixo 20x20mm - Lado Direito/Centro)
+    # Furo da Argola (Nó Superior Esquerdo)
+    draw.ellipse([65, 65, 95, 95], fill=(244, 246, 249), outline=(50, 50, 50), width=3)
+
+    # QR Code Rebaixo Central (20x20mm)
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
     link = f"{host}/p/{pet_id}"
-    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((180, 180))
-    img.paste(qr_img, (100, 60))
+    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((150, 150))
+    img.paste(qr_img, (175, 75))
 
-    # Textos em Alto-Relevo (Simulação)
+    # Textos do Osso
     try:
-        font_large = ImageFont.truetype("arial.ttf", 32)
-        font_small = ImageFont.truetype("arial.ttf", 22)
+        font_large = ImageFont.truetype("arial.ttf", 24)
+        font_small = ImageFont.truetype("arial.ttf", 18)
     except IOError:
         font_large = font_small = ImageFont.load_default()
 
-    # Nome do Pet e ID
-    nome_exibicao = (nome_pet[:10] + '..') if len(nome_pet) > 10 else nome_pet
-    draw.text((300, 90), nome_exibicao.upper(), fill=(40, 40, 40), font=font_large)
-    draw.text((300, 150), f"ID: #{pet_id}", fill=(200, 40, 40), font=font_small)
-    draw.text((300, 190), "50 x 30 mm", fill=(120, 120, 120), font=font_small)
+    nome_exibicao = (nome_pet[:8] + '..') if len(nome_pet) > 8 else nome_pet
+    draw.text((345, 120), nome_exibicao.upper(), fill=(40, 40, 40), font=font_large)
+    draw.text((345, 160), f"#{pet_id}", fill=(200, 40, 40), font=font_small)
 
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
@@ -255,88 +260,53 @@ def preview_plaquinha(pet_id):
     img_buffer = gerar_preview_plaquinha_50x30(pet_id, nome_pet)
     return send_file(img_buffer, mimetype='image/png')
 
-# --- ÁREA DO TUTOR E PAINEL ADM UNIFICADOS ---
+# --- ÁREA EXCLUSIVA DO TUTOR ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     erro = None
-    sucesso = None
     autenticado_tutor = False
-    autenticado_adm = session.get('is_admin', False)
 
     pet_id = request.args.get('id') or request.form.get('id') or '1'
-    senha_adm_atual = get_senha_adm()
 
     if request.method == 'POST':
-        if 'gerar_lote' in request.form and autenticado_adm:
-            inicio = int(request.form.get('inicio', 1))
-            quantidade = int(request.form.get('quantidade', 150))
-            host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
-            
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for i in range(inicio, inicio + quantidade):
-                    pid = str(i)
-                    link = f"{host}/p/{pid}"
-                    svg_data = gerar_qr_code_svg(link).getvalue()
-                    zip_file.writestr(f"plaquinha_{i:03d}.svg", svg_data)
-            
-            zip_buffer.seek(0)
-            return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip')
+        senha_informada = request.form.get('senha_atual', '')
 
-        elif 'alterar_senha_adm' in request.form and autenticado_adm:
-            nova_senha_mestre = request.form.get('nova_senha_mestre', '').strip()
-            if nova_senha_mestre:
-                set_senha_adm(nova_senha_mestre)
-                sucesso = "Senha Mestre do Desenvolvedor alterada com sucesso!"
-            else:
-                erro = "A nova senha Mestre não pode estar em branco."
+        cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
+        pet_existente = cursor.fetchone()
+        senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
 
+        if senha_informada != senha_correta:
+            erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
         else:
-            senha_informada = request.form.get('senha_atual', '')
+            if 'salvar' in request.form:
+                nome = request.form['nome']
+                raca = request.form['raca']
+                tutor = request.form['tutor']
+                telefone = request.form['telefone']
+                observacoes = request.form['observacoes']
+                status_opcao = request.form['status_select']
+                status_custom = request.form.get('status_custom', '').strip()
+                nova_senha = request.form.get('nova_senha', '')
 
-            if senha_informada == senha_adm_atual or request.form.get('id') == 'ADMIN':
-                if senha_informada == senha_adm_atual:
-                    session['is_admin'] = True
-                    autenticado_adm = True
-                else:
-                    erro = "Senha Mestre de Administrador incorreta!"
+                status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
+                senha_final = nova_senha if nova_senha.strip() != '' else senha_correta
+
+                cursor.execute('''
+                    INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        nome=excluded.nome, raca=excluded.raca, tutor=excluded.tutor,
+                        telefone=excluded.telefone, observacoes=excluded.observacoes,
+                        status=excluded.status, senha=excluded.senha
+                ''', (pet_id, nome, raca, tutor, telefone, observacoes, status_final, senha_final))
+                
+                conn.commit()
+                conn.close()
+                return redirect(f'/p/{pet_id}')
             else:
-                cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
-                pet_existente = cursor.fetchone()
-                senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
-
-                if senha_informada != senha_correta:
-                    erro = "Senha incorreta! A senha padrão de primeiro acesso é 1234."
-                else:
-                    if 'salvar' in request.form:
-                        nome = request.form['nome']
-                        raca = request.form['raca']
-                        tutor = request.form['tutor']
-                        telefone = request.form['telefone']
-                        observacoes = request.form['observacoes']
-                        status_opcao = request.form['status_select']
-                        status_custom = request.form.get('status_custom', '').strip()
-                        nova_senha = request.form.get('nova_senha', '')
-
-                        status_final = status_custom if status_opcao == 'CUSTOM' and status_custom else status_opcao
-                        senha_final = nova_senha if nova_senha.strip() != '' else senha_correta
-
-                        cursor.execute('''
-                            INSERT INTO pets (id, nome, raca, tutor, telefone, observacoes, status, senha)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET
-                                nome=excluded.nome, raca=excluded.raca, tutor=excluded.tutor,
-                                telefone=excluded.telefone, observacoes=excluded.observacoes,
-                                status=excluded.status, senha=excluded.senha
-                        ''', (pet_id, nome, raca, tutor, telefone, observacoes, status_final, senha_final))
-                        
-                        conn.commit()
-                        conn.close()
-                        return redirect(f'/p/{pet_id}')
-                    else:
-                        autenticado_tutor = True
+                autenticado_tutor = True
 
     cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
     pet = cursor.fetchone()
@@ -354,7 +324,6 @@ def cadastrar():
             .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
             h2 { color: #2c3e50; text-align: center; margin-top: 0; font-size: 20px; }
             .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
-            .sucesso { background-color: #27ae60; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
             label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
             input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
             .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
@@ -367,11 +336,6 @@ def cadastrar():
             .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
             .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
             .num-label { font-size: 10px; color: #e74c3c; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
-            
-            .adm-box { background: #34495e; color: white; padding: 15px; border-radius: 10px; margin-top: 10px; }
-            .adm-box label { color: #ecf0f1; }
-            .adm-box button { background-color: #8e44ad; }
-            .logout-adm { display: block; text-align: center; margin-top: 10px; color: #e74c3c; font-size: 12px; text-decoration: none; }
         </style>
         <script>
             function toggleCustomStatus(selectObject) {
@@ -388,36 +352,7 @@ def cadastrar():
                 <div class="erro">{{ erro }}</div>
             {% endif %}
 
-            {% if sucesso %}
-                <div class="sucesso">{{ sucesso }}</div>
-            {% endif %}
-
-            {% if autenticado_adm %}
-                <h2>🛠️ Modo Desenvolvedor / ADM</h2>
-                
-                <form method="POST">
-                    <div class="adm-box">
-                        <label style="margin-top:0;">🔢 ID do Primeiro Número:</label>
-                        <input type="number" name="inicio" value="1" min="1" required>
-
-                        <label>📦 Quantidade de QR Codes (Lote):</label>
-                        <input type="number" name="quantidade" value="150" min="1" max="500" required>
-
-                        <button type="submit" name="gerar_lote">🚀 Baixar Lote SVG (ZIP)</button>
-                    </div>
-                </form>
-
-                <form method="POST" style="margin-top: 15px;">
-                    <div class="sec-pass">
-                        <label style="margin-top:0; color:#2c3e50;">🔐 Alterar Senha Mestre do Desenvolvedor:</label>
-                        <input type="password" name="nova_senha_mestre" placeholder="Digite sua nova senha pessoal" required>
-                        <button type="submit" name="alterar_senha_adm" style="background-color: #e67e22; margin-top: 10px; font-size: 14px; padding: 8px;">🔑 Salvar Nova Senha Mestre</button>
-                    </div>
-                </form>
-
-                <a href="/admin_logout" class="logout-adm">Sair do Modo Desenvolvedor</a>
-
-            {% elif not autenticado_tutor %}
+            {% if not autenticado_tutor %}
                 <form method="POST" action="/cadastrar?id={{ pet_id }}">
                     <input type="hidden" name="id" value="{{ pet_id }}">
 
@@ -432,7 +367,7 @@ def cadastrar():
                     <div class="sec-pass">
                         <label style="margin-top:0;">🔑 Digite a Senha:</label>
                         <input type="password" name="senha_atual" placeholder="Digite a senha" required autofocus>
-                        <span class="help-text">ℹ️ Tutor/ADM primeiro acesso: <strong>1234</strong></span>
+                        <span class="help-text">ℹ️ Primeiro acesso: <strong>1234</strong></span>
                     </div>
 
                     <button type="submit" name="entrar">🔓 Acessar Dados</button>
@@ -484,19 +419,120 @@ def cadastrar():
                 </form>
             {% endif %}
 
-            <a href="/preview/plaquinha/{{ pet_id }}" target="_blank" class="preview-link">🎨 Ver Esboço/Modelo 3D da Placa 50x30mm</a>
+            <a href="/preview/plaquinha/{{ pet_id }}" target="_blank" class="preview-link">🦴 Ver Modelo 3D (Formato Osso)</a>
             <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
             <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
         </div>
     </body>
     </html>
     '''
-    return render_template_string(html_form, pet=pet, erro=erro, sucesso=sucesso, autenticado_tutor=autenticado_tutor, autenticado_adm=autenticado_adm, pet_id=pet_id)
+    return render_template_string(html_form, pet=pet, erro=erro, autenticado_tutor=autenticado_tutor, pet_id=pet_id)
+
+# --- ROTA RESTRITA EXCLUSIVA DO PAINEL ADM ---
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    erro = None
+    sucesso = None
+    autenticado_adm = session.get('is_admin', False)
+    senha_adm_atual = get_senha_adm()
+
+    if request.method == 'POST':
+        if 'login_adm' in request.form:
+            senha_ingres = request.form.get('senha_adm_login', '')
+            if senha_ingres == senha_adm_atual:
+                session['is_admin'] = True
+                autenticado_adm = True
+            else:
+                erro = "Senha Mestre do Administrador incorreta!"
+
+        elif 'gerar_lote' in request.form and autenticado_adm:
+            inicio = int(request.form.get('inicio', 1))
+            quantidade = int(request.form.get('quantidade', 150))
+            host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+            
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for i in range(inicio, inicio + quantidade):
+                    pid = str(i)
+                    link = f"{host}/p/{pid}"
+                    svg_data = gerar_qr_code_svg(link).getvalue()
+                    zip_file.writestr(f"plaquinha_{i:03d}.svg", svg_data)
+            
+            zip_buffer.seek(0)
+            return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip')
+
+        elif 'alterar_senha_adm' in request.form and autenticado_adm:
+            nova_senha_mestre = request.form.get('nova_senha_mestre', '').strip()
+            if nova_senha_mestre:
+                set_senha_adm(nova_senha_mestre)
+                sucesso = "Senha Mestre alterada com sucesso!"
+            else:
+                erro = "A nova senha Mestre não pode estar em branco."
+
+    html_admin = '''
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Painel ADM - PlaquinhaPet</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background-color: #2c3e50; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .form-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 100%; max-width: 400px; }
+            h2 { color: #2c3e50; text-align: center; margin-top: 0; font-size: 20px; }
+            .erro { background-color: #e74c3c; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
+            .sucesso { background-color: #27ae60; color: white; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; margin-bottom: 15px; }
+            label { font-size: 13px; color: #34495e; font-weight: bold; display: block; margin-top: 10px; }
+            input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+            .sec-pass { background: #edf2f7; padding: 12px; border-radius: 8px; margin-top: 15px; border: 1px solid #cbd5e0; }
+            button { width: 100%; background-color: #8e44ad; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 15px; cursor: pointer; }
+            .logout-adm { display: block; text-align: center; margin-top: 15px; color: #e74c3c; font-size: 12px; text-decoration: none; }
+        </style>
+    </head>
+    <body>
+        <div class="form-card">
+            <h2>🛠️ Painel do Desenvolvedor</h2>
+
+            {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+            {% if sucesso %}<div class="sucesso">{{ sucesso }}</div>{% endif %}
+
+            {% if not autenticado_adm %}
+                <form method="POST">
+                    <label>🔑 Digite a Senha Mestre ADM:</label>
+                    <input type="password" name="senha_adm_login" placeholder="Digite sua senha Mestre" required autofocus>
+                    <button type="submit" name="login_adm">Acessar Painel</button>
+                </form>
+            {% else %}
+                <form method="POST">
+                    <label>🔢 ID do Primeiro Número:</label>
+                    <input type="number" name="inicio" value="1" min="1" required>
+
+                    <label>📦 Quantidade de QR Codes (Lote):</label>
+                    <input type="number" name="quantidade" value="150" min="1" max="500" required>
+
+                    <button type="submit" name="gerar_lote">🚀 Baixar Lote SVG (ZIP)</button>
+                </form>
+
+                <form method="POST">
+                    <div class="sec-pass">
+                        <label style="margin-top:0;">🔐 Nova Senha Mestre:</label>
+                        <input type="password" name="nova_senha_mestre" placeholder="Sua nova senha pessoal" required>
+                        <button type="submit" name="alterar_senha_adm" style="background-color: #e67e22; font-size: 14px; padding: 8px;">🔑 Salvar Senha Mestre</button>
+                    </div>
+                </form>
+
+                <a href="/admin_logout" class="logout-adm">Sair do Painel ADM</a>
+            {% endif %}
+        </div>
+    </body>
+    </html>
+    '''
+    return render_template_string(html_admin, erro=erro, sucesso=sucesso, autenticado_adm=autenticado_adm)
 
 @app.route('/admin_logout')
 def admin_logout():
     session.pop('is_admin', None)
-    return redirect('/cadastrar')
+    return redirect('/admin')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
