@@ -105,7 +105,7 @@ def gerar_qr_code_svg(link):
     buffer.seek(0)
     return buffer
 
-# --- GERADOR QUE UTILIZA A SUA IMAGEM "gabarito_osso.png" ---
+# --- GERADOR QUE UTILIZA A SUA IMAGEM "gabarito_osso.png" COM POSICIONAMENTO AJUSTADO ---
 def gerar_preview_plaquinha_50x30(pet_id, nome_pet):
     try:
         # Carrega a imagem enviada por você no GitHub
@@ -116,22 +116,15 @@ def gerar_preview_plaquinha_50x30(pet_id, nome_pet):
 
     draw = ImageDraw.Draw(img)
 
-    # 1. Aplica o QR Code dinâmico sobreposto no rebaixo do gabarito
+    # 1. Gera o QR Code dinâmico do pet
     host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
     link = f"{host}/p/{pet_id}"
-    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((140, 140))
     
-    # Posição centralizada para o QR Code
-    img.paste(qr_img, (140, 115))
-
-    # 2. Textos (ID do Pet e Instrução)
-    try:
-        font_sub = ImageFont.truetype("arial.ttf", 16)
-    except IOError:
-        font_sub = ImageFont.load_default()
-
-    # Chamada e identificador dinâmico do pet
-    draw.text((300, 285), f"PLAQUINHA #{pet_id}", fill=(255, 255, 255), font=font_sub, anchor="mm")
+    # Redimensiona o QR Code para caber perfeitamente no rebaixo da plaquinha da direita (82x82px)
+    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((82, 82))
+    
+    # Sobrepõe no local correto da plaquinha inferior direita (Coordenadas X=398, Y=222)
+    img.paste(qr_img, (398, 222))
 
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
