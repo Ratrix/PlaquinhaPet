@@ -15,6 +15,7 @@ import qrcode
 import qrcode.image.svg
 from qrcode.constants import ERROR_CORRECT_L
 from flask import Flask, render_template_string, request, redirect, send_file, session
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
 app.secret_key = 'chave_secreta_langner_assados_3d'
@@ -25,7 +26,6 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Tabela de pets
     try:
         cursor.execute("SELECT senha FROM pets LIMIT 1")
     except sqlite3.OperationalError:
@@ -44,7 +44,6 @@ def init_db():
         )
     ''')
     
-    # Tabela de configurações globais (Senha Mestre ADM)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config (
             chave TEXT PRIMARY KEY,
@@ -52,7 +51,6 @@ def init_db():
         )
     ''')
 
-    # Registro padrão inicial do pet ID 1
     cursor.execute("SELECT COUNT(*) FROM pets WHERE id = '1'")
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
@@ -60,7 +58,6 @@ def init_db():
             VALUES ('1', 'Zoeyy', 'SDS - Só Deus Sabe', 'Joseanderson Langner', '11980837042', 'Possui chip e precisa de medicação.', 'PERDIDO', '1234')
         ''')
         
-    # Configuração da Senha Mestre do ADM (Padrão inicial: 1234)
     cursor.execute("SELECT valor FROM config WHERE chave = 'senha_adm'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO config (chave, valor) VALUES ('senha_adm', '1234')")
@@ -105,6 +102,42 @@ def gerar_qr_code_svg(link):
     img = qr.make_image()
     buffer = io.BytesIO()
     img.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# --- GERADOR DA IMAGEM DA PLAQUINHA 50x30mm PARA MODELAGEM 3D ---
+def gerar_preview_plaquinha_50x30(pet_id, nome_pet):
+    # Proporção 500x300 pixels (representando 50x30mm)
+    img = Image.new('RGB', (500, 300), color=(240, 240, 240))
+    draw = ImageDraw.Draw(img)
+
+    # Corpo da Placa (Borda arredondada)
+    draw.rounded_rectangle([10, 10, 490, 290], radius=30, fill=(255, 255, 255), outline=(50, 50, 50), width=4)
+
+    # Furo da Argola (Extremidade Esquerda - 4mm)
+    draw.ellipse([30, 125, 80, 175], fill=(240, 240, 240), outline=(50, 50, 50), width=3)
+
+    # QR Code (Rebaixo 20x20mm - Lado Direito/Centro)
+    host = request.host_url.replace('https://', '').replace('http://', '').rstrip('/')
+    link = f"{host}/p/{pet_id}"
+    qr_img = Image.open(gerar_qr_code_20mm_png(link)).resize((180, 180))
+    img.paste(qr_img, (100, 60))
+
+    # Textos em Alto-Relevo (Simulação)
+    try:
+        font_large = ImageFont.truetype("arial.ttf", 32)
+        font_small = ImageFont.truetype("arial.ttf", 22)
+    except IOError:
+        font_large = font_small = ImageFont.load_default()
+
+    # Nome do Pet e ID
+    nome_exibicao = (nome_pet[:10] + '..') if len(nome_pet) > 10 else nome_pet
+    draw.text((300, 90), nome_exibicao.upper(), fill=(40, 40, 40), font=font_large)
+    draw.text((300, 150), f"ID: #{pet_id}", fill=(200, 40, 40), font=font_small)
+    draw.text((300, 190), "50 x 30 mm", fill=(120, 120, 120), font=font_small)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
     buffer.seek(0)
     return buffer
 
@@ -210,6 +243,18 @@ def qrcode_pet_svg(pet_id):
     img_buffer = gerar_qr_code_svg(link)
     return send_file(img_buffer, mimetype='image/svg+xml', as_attachment=True, download_name=f'qrcode_plaquinha_{pet_id}.svg')
 
+@app.route('/preview/plaquinha/<pet_id>')
+def preview_plaquinha(pet_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT nome FROM pets WHERE id = ?", (pet_id,))
+    pet = cursor.fetchone()
+    conn.close()
+    
+    nome_pet = pet[0] if pet else "PET"
+    img_buffer = gerar_preview_plaquinha_50x30(pet_id, nome_pet)
+    return send_file(img_buffer, mimetype='image/png')
+
 # --- ÁREA DO TUTOR E PAINEL ADM UNIFICADOS ---
 @app.route('/cadastrar', methods=['GET', 'POST'])
 def cadastrar():
@@ -224,7 +269,6 @@ def cadastrar():
     senha_adm_atual = get_senha_adm()
 
     if request.method == 'POST':
-        # 🛠️ AÇÃO 1: GERAR LOTE DE PLAQUINHAS (ADM)
         if 'gerar_lote' in request.form and autenticado_adm:
             inicio = int(request.form.get('inicio', 1))
             quantidade = int(request.form.get('quantidade', 150))
@@ -241,7 +285,6 @@ def cadastrar():
             zip_buffer.seek(0)
             return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name=f'lote_plaquinhas_{inicio}_a_{inicio + quantidade - 1}.zip')
 
-        # 🛠️ AÇÃO 2: ALTERAR SENHA MESTRE DO ADM
         elif 'alterar_senha_adm' in request.form and autenticado_adm:
             nova_senha_mestre = request.form.get('nova_senha_mestre', '').strip()
             if nova_senha_mestre:
@@ -250,11 +293,9 @@ def cadastrar():
             else:
                 erro = "A nova senha Mestre não pode estar em branco."
 
-        # 🔑 AÇÃO 3: VALIDAÇÃO DE LOGIN (TUTOR OU ADM)
         else:
             senha_informada = request.form.get('senha_atual', '')
 
-            # Se for login do Desenvolvedor/ADM
             if senha_informada == senha_adm_atual or request.form.get('id') == 'ADMIN':
                 if senha_informada == senha_adm_atual:
                     session['is_admin'] = True
@@ -262,7 +303,6 @@ def cadastrar():
                 else:
                     erro = "Senha Mestre de Administrador incorreta!"
             else:
-                # Login do Tutor
                 cursor.execute("SELECT senha FROM pets WHERE id = ?", (pet_id,))
                 pet_existente = cursor.fetchone()
                 senha_correta = pet_existente[0] if (pet_existente and pet_existente[0]) else '1234'
@@ -322,6 +362,7 @@ def cadastrar():
             button { width: 100%; background-color: #3498db; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; }
             .qr-link { display: block; text-align: center; margin-top: 15px; color: #27ae60; text-decoration: none; font-size: 13px; font-weight: bold; }
             .svg-link { display: block; text-align: center; margin-top: 8px; color: #8e44ad; text-decoration: none; font-size: 12px; font-weight: bold; }
+            .preview-link { display: block; text-align: center; margin-top: 8px; color: #d35400; text-decoration: none; font-size: 12px; font-weight: bold; }
             
             .header-id-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
             .num-badge { border: 2px solid #e74c3c; color: #e74c3c; font-weight: bold; font-size: 18px; padding: 4px 12px; border-radius: 6px; }
@@ -352,7 +393,6 @@ def cadastrar():
             {% endif %}
 
             {% if autenticado_adm %}
-                <!-- PAINEL MODOS DESENVOLVEDOR / ADM -->
                 <h2>🛠️ Modo Desenvolvedor / ADM</h2>
                 
                 <form method="POST">
@@ -367,7 +407,6 @@ def cadastrar():
                     </div>
                 </form>
 
-                <!-- FORMULÁRIO PARA ALTERAR SENHA MESTRE -->
                 <form method="POST" style="margin-top: 15px;">
                     <div class="sec-pass">
                         <label style="margin-top:0; color:#2c3e50;">🔐 Alterar Senha Mestre do Desenvolvedor:</label>
@@ -379,7 +418,6 @@ def cadastrar():
                 <a href="/admin_logout" class="logout-adm">Sair do Modo Desenvolvedor</a>
 
             {% elif not autenticado_tutor %}
-                <!-- PASSO 1: TELA DE ENTRADA PADRÃO -->
                 <form method="POST" action="/cadastrar?id={{ pet_id }}">
                     <input type="hidden" name="id" value="{{ pet_id }}">
 
@@ -401,7 +439,6 @@ def cadastrar():
                 </form>
 
             {% else %}
-                <!-- PASSO 2: FORMULÁRIO DO TUTOR LIBERADO -->
                 <h2>⚙️ Área do Tutor</h2>
                 <form method="POST" action="/cadastrar?id={{ pet_id }}">
                     <input type="hidden" name="id" value="{{ pet_id }}">
@@ -447,6 +484,7 @@ def cadastrar():
                 </form>
             {% endif %}
 
+            <a href="/preview/plaquinha/{{ pet_id }}" target="_blank" class="preview-link">🎨 Ver Esboço/Modelo 3D da Placa 50x30mm</a>
             <a href="/qrcode/{{ pet_id }}" target="_blank" class="qr-link">🔍 Visualizar QR Code PNG (ID {{ pet_id }})</a>
             <a href="/qrcode/svg/{{ pet_id }}" target="_blank" class="svg-link">📐 Baixar Vetor SVG para Fusion 360 (ID {{ pet_id }})</a>
         </div>
